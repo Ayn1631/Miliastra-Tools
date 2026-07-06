@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+import base64
+import io
+import json
+from pathlib import Path
+
+import streamlit as st
+import streamlit.components.v1 as components
+
+from UI.gia_image import (
+    DEFAULT_TEMPLATE_GIA,
+    ImageGiaSettings,
+    build_image_gia_bytes,
+    grid_layout,
+    grid_units_to_meters,
+    load_rgba_image,
+    meters_to_grid_units,
+    resize_for_pixel_budget,
+    scale_image_for_parsing_xy,
+)
+from UI.build_gia_objects import TYPE_NAME_TO_TEMPLATE_ID
+
+
+RESIZE_BOX_COMPONENT = components.declare_component(
+    "resize_box",
+    path=str(Path(__file__).resolve().parent / "components" / "resize_box"),
+)
+
+
+def image_data_url(image) -> str:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def sync_dragged_scale(component_value: dict | None) -> None:
+    if not isinstance(component_value, dict):
+        return
+    scale_x = int(component_value.get("scale_x_percent") or 100)
+    scale_y = int(component_value.get("scale_y_percent") or scale_x)
+    scale_x = max(1, min(400, scale_x))
+    scale_y = max(1, min(400, scale_y))
+    if (
+        st.session_state.get("image_to_gia_scale_x_percent", 100) != scale_x
+        or st.session_state.get("image_to_gia_scale_y_percent", 100) != scale_y
+    ):
+        st.session_state["image_to_gia_scale_x_percent"] = scale_x
+        st.session_state["image_to_gia_scale_y_percent"] = scale_y
+        st.rerun()
+
+
+def render_image_to_gia_page() -> None:
+    st.caption("上传图片后按像素生成白模 GIA。每个可见像素会变成一个长方体或指定白模元件。")
+
+    uploaded = st.file_uploader("上传图片", type=["png", "jpg", "jpeg", "webp", "bmp"], key="image_to_gia_upload")
+    if uploaded is None:
+        st.info("先上传图片。透明像素会按 alpha 阈值过滤。")
+        return
+
+    try:
+        image = load_rgba_image(uploaded.getvalue())
+    except Exception as exc:
+        st.error(f"图片读取失败：{exc}")
+        return
+
+    width_px, height_px = image.size
+    st.image(image, caption=f"原始尺寸：{width_px} x {height_px} px", use_column_width=True)
+    st.metric("原图总像素数", f"{width_px * height_px:,}")
+
+    st.subheader("图片解析缩放")
+    if "image_to_gia_scale_x_percent" not in st.session_state:
+        st.session_state["image_to_gia_scale_x_percent"] = 100
+    if "image_to_gia_scale_y_percent" not in st.session_state:
+        st.session_state["image_to_gia_scale_y_percent"] = 100
+
+    scale_lock_aspect = st.checkbox("等比缩放图片", value=True, key="image_to_gia_scale_lock_aspect")
+    dragged = RESIZE_BOX_COMPONENT(
+        image_data_url=image_data_url(image),
+        image_width=width_px,
+        image_height=height_px,
+        scale_x_percent=int(st.session_state["image_to_gia_scale_x_percent"]),
+        scale_y_percent=int(st.session_state["image_to_gia_scale_y_percent"]),
+        lock_aspect=scale_lock_aspect,
+        key="image_to_gia_resize_box",
+        default=None,
+    )
+    sync_dragged_scale(dragged)
+
+    col_scale_x, col_scale_y = st.columns(2)
+    with col_scale_x:
+        scale_x_percent = st.number_input(
+            "图片 X 缩放（%）",
+            min_value=1,
+            max_value=400,
+            value=int(st.session_state["image_to_gia_scale_x_percent"]),
+            step=1,
+            key="image_to_gia_scale_x_percent",
+        )
+    if scale_lock_aspect:
+        scale_y_percent = int(scale_x_percent)
+        st.session_state["image_to_gia_scale_y_percent"] = scale_y_percent
+        with col_scale_y:
+            st.number_input(
+                "图片 Y 缩放（%）",
+                min_value=1,
+                max_value=400,
+                value=scale_y_percent,
+                step=1,
+                disabled=True,
+                key="image_to_gia_scale_y_percent_locked",
+            )
+    else:
+        with col_scale_y:
+            scale_y_percent = st.number_input(
+                "图片 Y 缩放（%）",
+                min_value=1,
+                max_value=400,
+                value=int(st.session_state["image_to_gia_scale_y_percent"]),
+                step=1,
+                key="image_to_gia_scale_y_percent",
+            )
+
+    scaled_image = scale_image_for_parsing_xy(image, int(scale_x_percent), int(scale_y_percent))
+    scaled_width_px, scaled_height_px = scaled_image.size
+    col_scaled_a, col_scaled_b = st.columns(2)
+    with col_scaled_a:
+        st.metric("解析用总像素数", f"{scaled_width_px * scaled_height_px:,}")
+    with col_scaled_b:
+        st.metric("图片缩放比例", f"X {int(scale_x_percent)}% / Y {int(scale_y_percent)}%")
+
+    st.subheader("生成尺寸")
+    size_mode = st.radio(
+        "尺寸模式",
+        ["调高宽自动计算单个大小", "调单个大小自动计算高宽"],
+        horizontal=True,
+        key="image_to_gia_size_mode",
+    )
+
+    if size_mode == "调高宽自动计算单个大小":
+        col_width, col_height, col_lock = st.columns([1, 1, 1])
+        with col_lock:
+            keep_aspect = st.checkbox("锁定图片宽高比", value=True, key="image_to_gia_keep_aspect")
+        with col_width:
+            target_width_m = st.number_input(
+                "期望总宽度（米）",
+                min_value=0.01,
+                max_value=50.0,
+                value=min(10.0, 50.0),
+                step=0.01,
+                key="image_to_gia_width_m",
+            )
+        aspect_height = target_width_m * scaled_height_px / max(scaled_width_px, 1)
+        with col_height:
+            if keep_aspect:
+                target_height_m = max(0.01, min(50.0, aspect_height))
+                st.number_input(
+                    "期望总高度（米）",
+                    min_value=0.01,
+                    max_value=50.0,
+                    value=target_height_m,
+                    step=0.01,
+                    disabled=True,
+                    key="image_to_gia_height_m_locked",
+                )
+            else:
+                target_height_m = st.number_input(
+                    "期望总高度（米）",
+                    min_value=0.01,
+                    max_value=50.0,
+                    value=max(0.01, min(10.0 * scaled_height_px / max(scaled_width_px, 1), 50.0)),
+                    step=0.01,
+                    key="image_to_gia_height_m",
+                )
+    else:
+        col_cell_x, col_cell_z = st.columns(2)
+        with col_cell_x:
+            cell_width_input_m = st.number_input(
+                "单个像素块宽度 X（米）",
+                min_value=0.01,
+                max_value=50.0,
+                value=0.10,
+                step=0.01,
+                key="image_to_gia_cell_width_m",
+            )
+        with col_cell_z:
+            cell_height_input_m = st.number_input(
+                "单个像素块高度 Z（米）",
+                min_value=0.01,
+                max_value=50.0,
+                value=0.10,
+                step=0.01,
+                key="image_to_gia_cell_height_m",
+            )
+        target_width_m = min(50.0, max(0.01, float(cell_width_input_m) * scaled_width_px))
+        target_height_m = min(50.0, max(0.01, float(cell_height_input_m) * scaled_height_px))
+        st.caption(
+            "会先按最大解析像素数得到最终采样网格，再由单个像素块大小反推总高宽。"
+            "若超过 50m 会被限制到 50m。"
+        )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        max_pixels = st.number_input(
+            "最大解析像素数",
+            min_value=1,
+            max_value=20000,
+            value=1200,
+            step=100,
+            key="image_to_gia_max_pixels",
+        )
+    with col_b:
+        alpha_threshold = st.number_input(
+            "透明度过滤阈值",
+            min_value=0,
+            max_value=255,
+            value=100,
+            step=1,
+            key="image_to_gia_alpha_threshold",
+        )
+
+    merge_mode = st.radio(
+        "像素生成算法",
+        ["逐像素生成", "相近颜色矩形合并"],
+        horizontal=True,
+        key="image_to_gia_merge_mode",
+    )
+    if merge_mode == "相近颜色矩形合并":
+        color_tolerance = st.number_input(
+            "颜色合并容差",
+            min_value=0,
+            max_value=255,
+            value=8,
+            step=1,
+            key="image_to_gia_color_tolerance",
+        )
+        st.caption("容差越大，越多相近颜色会合并为同一个矩形；矩形颜色取内部像素平均值。")
+    else:
+        color_tolerance = 0
+
+    remove_background = st.checkbox("按 RGB 去掉背景", value=False, key="image_to_gia_remove_background")
+    if remove_background:
+        col_bg_r, col_bg_g, col_bg_b, col_bg_tol = st.columns(4)
+        with col_bg_r:
+            background_r = st.number_input("背景 R", min_value=0, max_value=255, value=255, step=1)
+        with col_bg_g:
+            background_g = st.number_input("背景 G", min_value=0, max_value=255, value=255, step=1)
+        with col_bg_b:
+            background_b = st.number_input("背景 B", min_value=0, max_value=255, value=255, step=1)
+        with col_bg_tol:
+            background_tolerance = st.number_input("背景容差", min_value=0, max_value=255, value=0, step=1)
+        background_rgb = (int(background_r), int(background_g), int(background_b))
+        st.caption("只会从图片四周出发扣掉与该 RGB 接近且连通的背景；不会越过主体轮廓删除内部同色区域。")
+    else:
+        background_rgb = None
+        background_tolerance = 0
+
+    type_names = list(TYPE_NAME_TO_TEMPLATE_ID)
+    selected_type = st.selectbox(
+        "生成元件类型",
+        type_names,
+        index=type_names.index("长方体"),
+        key="image_to_gia_template_type",
+    )
+    template_path_text = st.text_input(
+        "模板 GIA",
+        value=str(DEFAULT_TEMPLATE_GIA),
+        key="image_to_gia_template_path",
+    )
+    output_name = st.text_input("输出文件名", value=f"{Path(uploaded.name).stem}_image_pixels.gia")
+
+    preview_sampled = resize_for_pixel_budget(
+        scaled_image,
+        int(max_pixels),
+        meters_to_grid_units(target_width_m),
+        meters_to_grid_units(target_height_m),
+    )
+    sampled_width_px, sampled_height_px = preview_sampled.size
+    if size_mode == "调单个大小自动计算高宽":
+        target_width_m = min(50.0, max(0.01, float(cell_width_input_m) * sampled_width_px))
+        target_height_m = min(50.0, max(0.01, float(cell_height_input_m) * sampled_height_px))
+        preview_sampled = resize_for_pixel_budget(
+            scaled_image,
+            int(max_pixels),
+            meters_to_grid_units(target_width_m),
+            meters_to_grid_units(target_height_m),
+        )
+        sampled_width_px, sampled_height_px = preview_sampled.size
+    preview_layout = grid_layout(target_width_m, target_height_m, sampled_width_px, sampled_height_px)
+    preview_cell_width_m = grid_units_to_meters(preview_layout["cell_width_units"])
+    preview_cell_height_m = grid_units_to_meters(preview_layout["cell_height_units"])
+    preview_block_height_m = min(preview_cell_width_m, preview_cell_height_m)
+    expected_ratio = (target_width_m * target_height_m) ** 0.5
+    st.metric("期望总大小", f"高 {target_height_m:.3f} m x 宽 {target_width_m:.3f} m")
+    st.metric("原总像素数", f"{sampled_width_px * sampled_height_px:,}")
+    st.metric("自动像素块厚度", f"{preview_block_height_m:.2f} m")
+    st.caption(f"采样网格：{sampled_width_px} x {sampled_height_px}。透明像素会在生成时按阈值过滤。")
+    st.caption(
+        "坐标规则：每个像素块的 position 是包围盒中心；scale.x / scale.z 是该块实际宽高，"
+        "scale.y 是厚度。生成时优先保证相邻单位严丝合缝，实际总高宽会落在 0.01 米网格上并尽量接近期望值。"
+    )
+    if expected_ratio <= 0:
+        st.warning("目标尺寸无效。")
+        return
+
+    submitted = st.button("生成图片 GIA", type="primary", key="image_to_gia_build")
+    if not submitted:
+        return
+
+    settings = ImageGiaSettings(
+        target_width_m=float(target_width_m),
+        target_height_m=float(target_height_m),
+        max_pixels=int(max_pixels),
+        alpha_threshold=int(alpha_threshold),
+        template_id=TYPE_NAME_TO_TEMPLATE_ID[selected_type],
+        merge_rectangles=merge_mode == "相近颜色矩形合并",
+        color_tolerance=int(color_tolerance),
+        background_rgb=background_rgb,
+        background_tolerance=int(background_tolerance),
+    )
+    try:
+        with st.spinner("正在解析像素并生成 GIA..."):
+            gia_data, summary, objects_json = build_image_gia_bytes(
+                image=scaled_image,
+                settings=settings,
+                template_path=Path(template_path_text),
+            )
+    except Exception as exc:
+        st.error(f"图片 GIA 生成失败：{exc}")
+        return
+
+    actual_size = summary["image"]["actual_size_m"]
+    st.success(
+        f"GIA 已生成：{summary['image']['object_count']} 个生成单位，{len(gia_data)} bytes；"
+        f"解析尺寸：{scaled_width_px} x {scaled_height_px} px；"
+        f"实际总大小：高 {actual_size['height']:.2f} m x 宽 {actual_size['width']:.2f} m"
+    )
+    with st.expander("生成摘要", expanded=False):
+        st.json(summary, expanded=False)
+    download_name = output_name.strip() or "image_pixels.gia"
+    if not download_name.lower().endswith(".gia"):
+        download_name += ".gia"
+    st.download_button("下载图片 GIA", gia_data, file_name=download_name, mime="application/octet-stream")
+    st.download_button(
+        "下载像素对象 JSON",
+        objects_json.encode("utf-8"),
+        file_name=f"{Path(download_name).stem}.objects.json",
+        mime="application/json",
+    )
+    st.download_button(
+        "下载生成摘要 JSON",
+        (json.dumps(summary, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        file_name=f"{Path(download_name).stem}.summary.json",
+        mime="application/json",
+    )

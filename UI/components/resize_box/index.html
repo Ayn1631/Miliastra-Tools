@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --border: #d9e1ec;
+      --muted: #667085;
+      --accent: #e5484d;
+      --panel: #f8fafc;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: transparent;
+    }
+
+    .wrap {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .stage {
+      position: relative;
+      height: 360px;
+      border: 1px dashed #b7c3d4;
+      border-radius: 8px;
+      background: #fff;
+      overflow: auto;
+    }
+
+    .box {
+      position: absolute;
+      left: 24px;
+      top: 24px;
+      border: 2px solid var(--accent);
+      box-sizing: border-box;
+      min-width: 20px;
+      min-height: 20px;
+      background: rgba(229, 72, 77, 0.05);
+    }
+
+    .box img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .handle {
+      position: absolute;
+      right: -8px;
+      bottom: -8px;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      background: var(--accent);
+      border: 2px solid #fff;
+      cursor: nwse-resize;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+    }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage" id="stage">
+      <div class="box" id="box">
+        <img id="img" alt="" />
+        <div class="handle" id="handle" title="拖拽缩放"></div>
+      </div>
+    </div>
+    <div class="meta">
+      <div id="size"></div>
+      <div id="scale"></div>
+    </div>
+  </div>
+
+  <script>
+    let args = {};
+    let state = {
+      scaleX: 100,
+      scaleY: 100,
+      baseWidth: 1,
+      baseHeight: 1,
+      lockAspect: true,
+    };
+
+    const box = document.getElementById("box");
+    const img = document.getElementById("img");
+    const handle = document.getElementById("handle");
+    const sizeText = document.getElementById("size");
+    const scaleText = document.getElementById("scale");
+
+    function sendMessage(type, data) {
+      window.parent.postMessage(
+        {
+          isStreamlitMessage: true,
+          type,
+          ...data,
+        },
+        "*",
+      );
+    }
+
+    function setFrameHeight(height) {
+      sendMessage("streamlit:setFrameHeight", { height });
+    }
+
+    function setValue(value) {
+      sendMessage("streamlit:setComponentValue", { value });
+    }
+
+    function render() {
+      const width = Math.max(20, Math.round(state.baseWidth * state.scaleX / 100));
+      const height = Math.max(20, Math.round(state.baseHeight * state.scaleY / 100));
+      box.style.width = `${width}px`;
+      box.style.height = `${height}px`;
+      sizeText.textContent = `解析尺寸：${Math.max(1, Math.round(state.baseWidth * state.scaleX / 100))} x ${Math.max(1, Math.round(state.baseHeight * state.scaleY / 100))} px`;
+      scaleText.textContent = `缩放：X ${Math.round(state.scaleX)}% / Y ${Math.round(state.scaleY)}%`;
+      setFrameHeight(430);
+    }
+
+    function emit() {
+      const scaledWidth = Math.max(1, Math.round(state.baseWidth * state.scaleX / 100));
+      const scaledHeight = Math.max(1, Math.round(state.baseHeight * state.scaleY / 100));
+      setValue({
+        scale_x_percent: Math.round(state.scaleX),
+        scale_y_percent: Math.round(state.scaleY),
+        scaled_width_px: scaledWidth,
+        scaled_height_px: scaledHeight,
+      });
+    }
+
+    function applyArgs(nextArgs) {
+      args = nextArgs || {};
+      state.baseWidth = Math.max(1, Number(args.image_width || 1));
+      state.baseHeight = Math.max(1, Number(args.image_height || 1));
+      state.scaleX = Math.max(1, Number(args.scale_x_percent || 100));
+      state.scaleY = Math.max(1, Number(args.scale_y_percent || state.scaleX));
+      state.lockAspect = Boolean(args.lock_aspect);
+      img.src = args.image_data_url || "";
+      render();
+    }
+
+    let drag = null;
+    handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      drag = {
+        startX: event.clientX,
+        startY: event.clientY,
+        startScaleX: state.scaleX,
+        startScaleY: state.scaleY,
+      };
+    });
+
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      const scaleX = Math.max(1, drag.startScaleX + dx / state.baseWidth * 100);
+      const scaleY = Math.max(1, drag.startScaleY + dy / state.baseHeight * 100);
+      if (state.lockAspect) {
+        const scale = Math.max(scaleX, scaleY);
+        state.scaleX = scale;
+        state.scaleY = scale;
+      } else {
+        state.scaleX = scaleX;
+        state.scaleY = scaleY;
+      }
+      render();
+    });
+
+    function endDrag(event) {
+      if (!drag) return;
+      drag = null;
+      emit();
+      try {
+        handle.releasePointerCapture(event.pointerId);
+      } catch (_) {}
+    }
+
+    handle.addEventListener("pointerup", endDrag);
+    handle.addEventListener("pointercancel", endDrag);
+
+    window.addEventListener("message", (event) => {
+      if (event.data.type !== "streamlit:render") return;
+      applyArgs(event.data.args);
+    });
+
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    setFrameHeight(430);
+  </script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+streamlit==1.45.1
+Pillow==12.3.0
+protobuf==7.35.1
+grpcio-tools==1.82.0
