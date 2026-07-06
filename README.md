@@ -1,6 +1,10 @@
 # Streamlit UI
 
+- 快速开始
+
 ```powershell
+# python=3.11
+pip install streamlit==1.45.1
 streamlit run .\scripts\streamlit_app.py
 ```
 
