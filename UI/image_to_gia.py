@@ -17,6 +17,15 @@ ROOT_DIR = SCRIPTS_DIR.parent
 DEFAULT_TEMPLATE_GIA = ROOT_DIR / "UI" / "白模解析.gia"
 GRID_STEP_M = 0.01
 
+COLLISION_MODE_NATIVE = "native"
+COLLISION_MODE_NATIVE_AND_CLIMB = "native_and_climb"
+COLLISION_MODE_OFF = "off"
+_COLLISION_MODE_FLAGS = {
+    COLLISION_MODE_NATIVE: (True, False),
+    COLLISION_MODE_NATIVE_AND_CLIMB: (True, True),
+    COLLISION_MODE_OFF: (False, False),
+}
+
 GIA_OBJECT_PLACEMENT_DIR = SCRIPTS_DIR / "gia_object_placement"
 if str(GIA_OBJECT_PLACEMENT_DIR) not in sys.path:
     sys.path.insert(0, str(GIA_OBJECT_PLACEMENT_DIR))
@@ -37,6 +46,16 @@ class ImageGiaSettings:
     color_tolerance: int = 0
     background_rgb: tuple[int, int, int] | None = None
     background_tolerance: int = 0
+    collision_mode: str = COLLISION_MODE_OFF
+
+
+def collision_mode_flags(mode: str) -> tuple[bool, bool]:
+    normalized = str(mode).strip().lower()
+    try:
+        return _COLLISION_MODE_FLAGS[normalized]
+    except KeyError as exc:
+        valid = ", ".join(sorted(_COLLISION_MODE_FLAGS))
+        raise ValueError(f"unsupported collision_mode: {mode!r}; expected one of: {valid}") from exc
 
 
 def clamp_scale(value: float) -> float:
@@ -349,6 +368,7 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
     color_tolerance = max(0, min(255, int(settings.color_tolerance)))
     background_rgb = settings.background_rgb
     background_tolerance = max(0, min(255, int(settings.background_tolerance)))
+    enable_collision, enable_climb = collision_mode_flags(settings.collision_mode)
     background_mask = build_edge_connected_background_mask(
         pixels,
         width_px,
@@ -407,8 +427,8 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
                             "rgb": rgb,
                             "opacity": opacity,
                         },
-                        "collision": False,
-                        "climb": False,
+                        "collision": enable_collision,
+                        "climb": enable_climb,
                     }
                 )
                 next_entity_id += 1
@@ -434,8 +454,8 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
                             "rgb": [int(r), int(g), int(b)],
                             "opacity": opacity,
                         },
-                        "collision": False,
-                        "climb": False,
+                        "collision": enable_collision,
+                        "climb": enable_climb,
                     }
                 )
                 next_entity_id += 1
@@ -467,6 +487,9 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
         "color_tolerance": color_tolerance,
         "background_rgb": list(background_rgb) if background_rgb is not None else None,
         "background_tolerance": background_tolerance,
+        "collision_mode": settings.collision_mode,
+        "enable_native_collision": enable_collision,
+        "enable_climb": enable_climb,
         "coordinate_rule": "position is the center of each pixel block bounding box on a 0.01 meter grid",
         "scale_rule": "scale x/y/z equals grid-aligned bounding-box size in meters; adjacent blocks share edges without gaps",
         "size_priority": "seamless grid first; actual width/height may differ from requested size",

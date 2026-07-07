@@ -9,6 +9,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from UI.gia_image import (
+    COLLISION_MODE_NATIVE,
+    COLLISION_MODE_NATIVE_AND_CLIMB,
+    COLLISION_MODE_OFF,
     DEFAULT_TEMPLATE_GIA,
     ImageGiaSettings,
     build_image_gia_bytes,
@@ -52,9 +55,14 @@ def sync_dragged_scale(component_value: dict | None) -> None:
 
 
 def render_image_to_gia_page() -> None:
-    st.caption("上传图片后按像素生成白模 GIA。每个可见像素会变成一个长方体或指定白模元件。")
+    st.markdown("## 1. 图片输入")
+    st.caption("上传图片后按像素解析并生成白模 GIA。透明区域可过滤，可选择逐像素生成或颜色矩形合并。")
 
-    uploaded = st.file_uploader("上传图片", type=["png", "jpg", "jpeg", "webp", "bmp"], key="image_to_gia_upload")
+    uploaded = st.file_uploader(
+        "选择图片文件",
+        type=["png", "jpg", "jpeg", "webp", "bmp"],
+        key="image_to_gia_upload",
+    )
     if uploaded is None:
         st.info("先上传图片。透明像素会按 alpha 阈值过滤。")
         return
@@ -66,10 +74,19 @@ def render_image_to_gia_page() -> None:
         return
 
     width_px, height_px = image.size
-    st.image(image, caption=f"原始尺寸：{width_px} x {height_px} px", use_column_width=True)
-    st.metric("原图总像素数", f"{width_px * height_px:,}")
+    preview_col, info_col = st.columns([3, 1])
+    with preview_col:
+        st.image(image, caption=f"原始尺寸：{width_px} × {height_px} px", use_column_width=True)
+    with info_col:
+        st.markdown("### 图片信息")
+        st.metric("宽度", f"{width_px} px")
+        st.metric("高度", f"{height_px} px")
+        st.metric("总像素数", f"{width_px * height_px:,}")
 
-    st.subheader("图片解析缩放")
+    st.markdown("---")
+    st.markdown("## 2. 图片解析")
+    st.markdown("### 2.1 解析缩放")
+    st.caption("拖动缩放框或直接输入 X / Y 百分比，决定进入后续像素解析的图片尺寸。")
     if "image_to_gia_scale_x_percent" not in st.session_state:
         st.session_state["image_to_gia_scale_x_percent"] = 100
     if "image_to_gia_scale_y_percent" not in st.session_state:
@@ -130,7 +147,9 @@ def render_image_to_gia_page() -> None:
     with col_scaled_b:
         st.metric("图片缩放比例", f"X {int(scale_x_percent)}% / Y {int(scale_y_percent)}%")
 
-    st.subheader("生成尺寸")
+    st.markdown("---")
+    st.markdown("## 3. 生成尺寸与采样")
+    st.markdown("### 3.1 尺寸控制方式")
     size_mode = st.radio(
         "尺寸模式",
         ["调高宽自动计算单个大小", "调单个大小自动计算高宽"],
@@ -200,6 +219,9 @@ def render_image_to_gia_page() -> None:
             "若超过 50m 会被限制到 50m。"
         )
 
+    st.markdown("### 3.2 采样与透明过滤")
+    st.caption("限制解析像素数量可以显著控制生成对象数量；透明度阈值越高，被忽略的半透明像素越多。")
+
     col_a, col_b = st.columns(2)
     with col_a:
         max_pixels = st.number_input(
@@ -220,6 +242,9 @@ def render_image_to_gia_page() -> None:
             key="image_to_gia_alpha_threshold",
         )
 
+    st.markdown("---")
+    st.markdown("## 4. 生成规则")
+    st.markdown("### 4.1 像素生成算法")
     merge_mode = st.radio(
         "像素生成算法",
         ["逐像素生成", "相近颜色矩形合并"],
@@ -239,6 +264,7 @@ def render_image_to_gia_page() -> None:
     else:
         color_tolerance = 0
 
+    st.markdown("### 4.2 背景处理")
     remove_background = st.checkbox("按 RGB 去掉背景", value=False, key="image_to_gia_remove_background")
     if remove_background:
         col_bg_r, col_bg_g, col_bg_b, col_bg_tol = st.columns(4)
@@ -256,6 +282,27 @@ def render_image_to_gia_page() -> None:
         background_rgb = None
         background_tolerance = 0
 
+    st.markdown("---")
+    st.markdown("## 5. 碰撞与元件")
+    st.markdown("### 5.1 碰撞模式")
+    collision_mode_label = st.radio(
+        "碰撞模式",
+        ["开启原生碰撞", "开启碰撞和攀爬", "关闭碰撞"],
+        index=2,
+        horizontal=True,
+        key="image_to_gia_collision_mode",
+    )
+    collision_mode = {
+        "开启原生碰撞": COLLISION_MODE_NATIVE,
+        "开启碰撞和攀爬": COLLISION_MODE_NATIVE_AND_CLIMB,
+        "关闭碰撞": COLLISION_MODE_OFF,
+    }[collision_mode_label]
+    st.caption(
+        "原生碰撞：可阻挡角色但不可攀爬；碰撞和攀爬：同时启用阻挡与攀爬；"
+        "关闭碰撞：角色可直接穿过生成元件。"
+    )
+
+    st.markdown("### 5.2 生成元件")
     type_names = list(TYPE_NAME_TO_TEMPLATE_ID)
     selected_type = st.selectbox(
         "生成元件类型",
@@ -268,8 +315,11 @@ def render_image_to_gia_page() -> None:
         value=str(DEFAULT_TEMPLATE_GIA),
         key="image_to_gia_template_path",
     )
+    st.markdown("### 5.3 输出设置")
     output_name = st.text_input("输出文件名", value=f"{Path(uploaded.name).stem}_image_pixels.gia")
 
+    st.markdown("---")
+    st.markdown("## 6. 生成预览")
     preview_sampled = resize_for_pixel_budget(
         scaled_image,
         int(max_pixels),
@@ -292,9 +342,13 @@ def render_image_to_gia_page() -> None:
     preview_cell_height_m = grid_units_to_meters(preview_layout["cell_height_units"])
     preview_block_height_m = min(preview_cell_width_m, preview_cell_height_m)
     expected_ratio = (target_width_m * target_height_m) ** 0.5
-    st.metric("期望总大小", f"高 {target_height_m:.3f} m x 宽 {target_width_m:.3f} m")
-    st.metric("原总像素数", f"{sampled_width_px * sampled_height_px:,}")
-    st.metric("自动像素块厚度", f"{preview_block_height_m:.2f} m")
+    metric_size, metric_grid, metric_thickness = st.columns(3)
+    with metric_size:
+        st.metric("期望总大小", f"高 {target_height_m:.3f} m × 宽 {target_width_m:.3f} m")
+    with metric_grid:
+        st.metric("采样像素数", f"{sampled_width_px * sampled_height_px:,}")
+    with metric_thickness:
+        st.metric("自动像素块厚度", f"{preview_block_height_m:.2f} m")
     st.caption(f"采样网格：{sampled_width_px} x {sampled_height_px}。透明像素会在生成时按阈值过滤。")
     st.caption(
         "坐标规则：每个像素块的 position 是包围盒中心；scale.x / scale.z 是该块实际宽高，"
@@ -304,7 +358,10 @@ def render_image_to_gia_page() -> None:
         st.warning("目标尺寸无效。")
         return
 
-    submitted = st.button("生成图片 GIA", type="primary", key="image_to_gia_build")
+    st.markdown("---")
+    st.markdown("## 7. 生成与下载")
+    st.caption("确认上方参数后开始生成。生成完成后可下载 GIA、对象 JSON 和摘要 JSON。")
+    submitted = st.button("生成图片 GIA", type="primary", key="image_to_gia_build", use_container_width=True)
     if not submitted:
         return
 
@@ -318,6 +375,7 @@ def render_image_to_gia_page() -> None:
         color_tolerance=int(color_tolerance),
         background_rgb=background_rgb,
         background_tolerance=int(background_tolerance),
+        collision_mode=collision_mode,
     )
     try:
         with st.spinner("正在解析像素并生成 GIA..."):

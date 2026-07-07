@@ -9,6 +9,9 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from UI.image_to_gia import (
+    COLLISION_MODE_NATIVE,
+    COLLISION_MODE_NATIVE_AND_CLIMB,
+    COLLISION_MODE_OFF,
     DEFAULT_TEMPLATE_GIA,
     ImageGiaSettings,
     build_image_gia_bytes,
@@ -21,6 +24,9 @@ from UI.image_to_gia import (
 )
 
 __all__ = [
+    'COLLISION_MODE_NATIVE',
+    'COLLISION_MODE_NATIVE_AND_CLIMB',
+    'COLLISION_MODE_OFF',
     'DEFAULT_TEMPLATE_GIA',
     'ImageGiaSettings',
     'build_image_gia_bytes',
