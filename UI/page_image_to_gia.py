@@ -105,47 +105,47 @@ def render_image_to_gia_page() -> None:
     )
     sync_dragged_scale(dragged)
 
-    col_scale_x, col_scale_y = st.columns(2)
-    with col_scale_x:
-        scale_x_percent = st.number_input(
-            "图片 X 缩放（%）",
-            min_value=1,
-            max_value=400,
-            value=int(st.session_state["image_to_gia_scale_x_percent"]),
-            step=1,
-            key="image_to_gia_scale_x_percent",
-        )
-    if scale_lock_aspect:
-        scale_y_percent = int(scale_x_percent)
-        st.session_state["image_to_gia_scale_y_percent"] = scale_y_percent
-        with col_scale_y:
-            st.number_input(
-                "图片 Y 缩放（%）",
-                min_value=1,
-                max_value=400,
-                value=scale_y_percent,
-                step=1,
-                disabled=True,
-                key="image_to_gia_scale_y_percent_locked",
-            )
-    else:
-        with col_scale_y:
-            scale_y_percent = st.number_input(
-                "图片 Y 缩放（%）",
-                min_value=1,
-                max_value=400,
-                value=int(st.session_state["image_to_gia_scale_y_percent"]),
-                step=1,
-                key="image_to_gia_scale_y_percent",
-            )
+    # col_scale_x, col_scale_y = st.columns(2)
+    # with col_scale_x:
+    #     scale_x_percent = st.number_input(
+    #         "图片 X 缩放（%）",
+    #         min_value=1,
+    #         max_value=400,
+    #         value=int(st.session_state["image_to_gia_scale_x_percent"]),
+    #         step=1,
+    #         key="image_to_gia_scale_x_percent",
+    #     )
+    # if scale_lock_aspect:
+    #     scale_y_percent = int(scale_x_percent)
+    #     st.session_state["image_to_gia_scale_y_percent"] = st.session_state["image_to_gia_scale_x_percent"]
+    #     with col_scale_y:
+    #         st.number_input(
+    #             "图片 Y 缩放（%）",
+    #             min_value=1,
+    #             max_value=400,
+    #             value=st.session_state["image_to_gia_scale_y_percent"],
+    #             step=1,
+    #             disabled=True,
+    #             key="image_to_gia_scale_y_percent_locked",
+    #         )
+    # else:
+    #     with col_scale_y:
+    #         scale_y_percent = st.number_input(
+    #             "图片 Y 缩放（%）",
+    #             min_value=1,
+    #             max_value=400,
+    #             value=int(st.session_state["image_to_gia_scale_y_percent"]),
+    #             step=1,
+    #             key="image_to_gia_scale_y_percent",
+    #         )
 
-    scaled_image = scale_image_for_parsing_xy(image, int(scale_x_percent), int(scale_y_percent))
+    scaled_image = scale_image_for_parsing_xy(image, int(st.session_state["image_to_gia_scale_x_percent"]), int(st.session_state["image_to_gia_scale_y_percent"]))
     scaled_width_px, scaled_height_px = scaled_image.size
     col_scaled_a, col_scaled_b = st.columns(2)
     with col_scaled_a:
         st.metric("解析用总像素数", f"{scaled_width_px * scaled_height_px:,}")
     with col_scaled_b:
-        st.metric("图片缩放比例", f"X {int(scale_x_percent)}% / Y {int(scale_y_percent)}%")
+        st.metric("图片缩放比例", f"X {int(st.session_state['image_to_gia_scale_x_percent'])}% / Y {int(st.session_state['image_to_gia_scale_y_percent'])}%")
 
     st.markdown("---")
     st.markdown("## 3. 生成尺寸与采样")
@@ -225,22 +225,41 @@ def render_image_to_gia_page() -> None:
     col_a, col_b = st.columns(2)
     with col_a:
         max_pixels = st.number_input(
-            "最大解析像素数",
+            "目标解析像素数",
             min_value=1,
-            max_value=20000,
-            value=1200,
+            max_value=40000,
+            value=2000,
             step=100,
             key="image_to_gia_max_pixels",
         )
     with col_b:
         alpha_threshold = st.number_input(
             "透明度过滤阈值",
-            min_value=0,
-            max_value=255,
-            value=100,
+            min_value=1,
+            max_value=256,
+            value=1,
             step=1,
             key="image_to_gia_alpha_threshold",
         )
+        alpha_threshold_mode = st.radio(
+            "最终透明度模式",
+            ["使用原有透明度", "设置全局统一透明度"],
+            horizontal=True,
+            key="alpha_threshold_mode",
+            index=1,
+            )
+        st.caption("注意: 在矩形合并时：\n- 参考透明度模式：会区分透明度差异，保留更多细节，基元数量更多\n- 无视透明度模式：忽略透明度差异做合并，减少整体基元数量")
+        if alpha_threshold_mode == "设置全局统一透明度":
+            alpha_threshold_num = st.number_input(
+                "全局统一透明度",
+                min_value=0,
+                max_value=255,
+                value=255,
+                step=1,
+                key="image_to_gia_global_alpha",
+            )
+        elif alpha_threshold_mode == "使用原有透明度":
+            alpha_threshold_num = -1
 
     st.markdown("---")
     st.markdown("## 4. 生成规则")
@@ -250,6 +269,7 @@ def render_image_to_gia_page() -> None:
         ["逐像素生成", "相近颜色矩形合并"],
         horizontal=True,
         key="image_to_gia_merge_mode",
+        index=1,
     )
     if merge_mode == "相近颜色矩形合并":
         color_tolerance = st.number_input(
@@ -370,6 +390,7 @@ def render_image_to_gia_page() -> None:
         target_height_m=float(target_height_m),
         max_pixels=int(max_pixels),
         alpha_threshold=int(alpha_threshold),
+        alpha_threshold_num=int(alpha_threshold_num),
         template_id=TYPE_NAME_TO_TEMPLATE_ID[selected_type],
         merge_rectangles=merge_mode == "相近颜色矩形合并",
         color_tolerance=int(color_tolerance),

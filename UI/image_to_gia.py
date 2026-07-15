@@ -39,6 +39,7 @@ class ImageGiaSettings:
     target_height_m: float
     max_pixels: int
     alpha_threshold: int
+    alpha_threshold_num: int
     template_id: int
     block_height_m: float | None = None
     entity_id_start: int = DEFAULT_ENTITY_ID_START + 100_000
@@ -67,7 +68,7 @@ def meters_to_grid_units(value: float) -> int:
 
 
 def grid_units_to_meters(value: int | float) -> float:
-    return round(float(value) * GRID_STEP_M, 2)
+    return float(value) * GRID_STEP_M
 
 
 def quantize_scale(value: float) -> float:
@@ -158,15 +159,17 @@ def color_distance_ok(
     seed: tuple[int, int, int, int],
     tolerance: int,
     alpha_threshold: int,
+    settings: ImageGiaSettings,
 ) -> bool:
     if pixel[3] < alpha_threshold:
         return False
     tolerance = max(0, int(tolerance))
+    if settings.alpha_threshold_num == -1 and abs(int(pixel[3]) - int(seed[3])) > tolerance:
+        return False
     return (
         abs(int(pixel[0]) - int(seed[0])) <= tolerance
         and abs(int(pixel[1]) - int(seed[1])) <= tolerance
         and abs(int(pixel[2]) - int(seed[2])) <= tolerance
-        and abs(int(pixel[3]) - int(seed[3])) <= tolerance
     )
 
 
@@ -274,6 +277,7 @@ def rectangle_fits(
     tolerance: int,
     alpha_threshold: int,
     background_mask: list[list[bool]],
+    settings: ImageGiaSettings,
 ) -> bool:
     for row in range(y0, y0 + height):
         for col in range(x0, x0 + width):
@@ -282,7 +286,7 @@ def rectangle_fits(
             pixel = pixels[col, row]
             if not is_visible_pixel(pixel, alpha_threshold, background_mask[row][col]):
                 return False
-            if not color_distance_ok(pixel, seed, tolerance, alpha_threshold):
+            if not color_distance_ok(pixel, seed, tolerance, alpha_threshold, settings=settings):
                 return False
     return True
 
@@ -297,6 +301,7 @@ def find_merge_rectangle(
     tolerance: int,
     alpha_threshold: int,
     background_mask: list[list[bool]],
+    settings: ImageGiaSettings,
 ) -> tuple[int, int]:
     seed = pixels[x0, y0]
     rect_width = 1
@@ -313,6 +318,7 @@ def find_merge_rectangle(
             tolerance,
             alpha_threshold,
             background_mask,
+            settings=settings
         )
     ):
         rect_width += 1
@@ -331,6 +337,7 @@ def find_merge_rectangle(
             tolerance,
             alpha_threshold,
             background_mask,
+            settings=settings
         )
     ):
         rect_height += 1
@@ -397,12 +404,14 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
                     color_tolerance,
                     int(settings.alpha_threshold),
                     background_mask,
+                    settings= settings
                 )
                 for used_row in range(row, row + rect_height_px):
                     for used_col in range(col, col + rect_width_px):
                         used[used_row][used_col] = True
 
                 rgb, opacity = average_color(pixels, col, row, rect_width_px, rect_height_px)
+                res_opacity = opacity if settings.alpha_threshold_num == -1 else settings.alpha_threshold_num
                 x_units = (
                     layout["first_x_units"]
                     + col * layout["cell_width_units"]
@@ -425,7 +434,7 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
                         "scale": [rect_width_m, block_height_m, rect_height_m],
                         "color": {
                             "rgb": rgb,
-                            "opacity": opacity,
+                            "opacity": res_opacity,
                         },
                         "collision": enable_collision,
                         "climb": enable_climb,
