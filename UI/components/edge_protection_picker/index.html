@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --border: #d9e1ec;
+      --muted: #667085;
+      --panel: #f8fafc;
+      --accent: #e5484d;
+      --stage-height: 680px;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: transparent;
+    }
+
+    .wrap {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: #fff;
+    }
+
+    .zoom-controls {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .zoom-label {
+      margin-right: 3px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    #zoomRange {
+      width: 170px;
+    }
+
+    #zoomValue {
+      min-width: 76px;
+      color: #344054;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .toolbar-hint {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .tool-button {
+      min-width: 0;
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 7px;
+      color: #344054;
+      background: #f8fafc;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .tool-button:hover {
+      border-color: #98a2b3;
+      background: #eef2f7;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .panel {
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: #fff;
+    }
+
+    .title {
+      margin: 0 0 7px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .stage {
+      width: 100%;
+      height: var(--stage-height);
+      overflow: auto;
+      border: 1px dashed #b7c3d4;
+      border-radius: 8px;
+      background: #eef2f7;
+    }
+
+    canvas {
+      display: block;
+      margin: 0 auto;
+      image-rendering: auto;
+      background: #fff;
+    }
+
+    #branchCanvas,
+    #resultCanvas {
+      cursor: crosshair;
+    }
+
+    .meta {
+      min-height: 38px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 4px;
+      border-radius: 999px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 10px;
+    }
+
+    .confirm-button {
+      min-width: 180px;
+      padding: 9px 18px;
+      border: 0;
+      border-radius: 7px;
+      color: #fff;
+      background: var(--accent);
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .confirm-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    @media (max-width: 980px) {
+      :root {
+        --stage-height: 620px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .toolbar-hint {
+        text-align: left;
+      }
+    }
+
+    @media (max-width: 560px) {
+      :root {
+        --stage-height: 500px;
+      }
+
+      #zoomRange {
+        width: 130px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="toolbar">
+      <div class="zoom-controls" aria-label="图片查看比例">
+        <span class="zoom-label">查看比例</span>
+        <button class="tool-button" id="zoomOutButton" type="button" aria-label="缩小">−</button>
+        <input id="zoomRange" type="range" min="25" max="500" step="5" value="100" />
+        <button class="tool-button" id="zoomInButton" type="button" aria-label="放大">＋</button>
+        <output id="zoomValue">自适应</output>
+        <button class="tool-button" id="fitButton" type="button">适应窗口</button>
+        <button class="tool-button" id="actualButton" type="button">100%</button>
+      </div>
+      <div class="toolbar-hint">放大后可在图片区域内滚动；点击坐标始终按原始画布换算。</div>
+    </div>
+    <div class="grid">
+      <section class="panel">
+        <h3 class="title" id="branchTitle">分支图片（点击保护，再次点击取消）</h3>
+        <div class="stage">
+          <canvas id="branchCanvas"></canvas>
+        </div>
+        <div class="meta" id="branchMeta"></div>
+      </section>
+      <section class="panel">
+        <h3 class="title" id="resultTitle">下一阶段输入 / 保护结果（点击删除，再次点击恢复）</h3>
+        <div class="stage">
+          <canvas id="resultCanvas"></canvas>
+        </div>
+        <div class="meta" id="resultMeta"></div>
+        <div class="legend" id="legend"></div>
+      </section>
+    </div>
+    <div class="actions">
+      <button class="confirm-button" id="confirmButton" type="button">确定并替换下一步输入</button>
+    </div>
+  </div>
+
+  <script>
+    const branchCanvas = document.getElementById("branchCanvas");
+    const resultCanvas = document.getElementById("resultCanvas");
+    const branchContext = branchCanvas.getContext("2d");
+    const resultContext = resultCanvas.getContext("2d");
+    const branchMeta = document.getElementById("branchMeta");
+    const resultMeta = document.getElementById("resultMeta");
+    const branchTitle = document.getElementById("branchTitle");
+    const resultTitle = document.getElementById("resultTitle");
+    const legend = document.getElementById("legend");
+    const confirmButton = document.getElementById("confirmButton");
+    const zoomRange = document.getElementById("zoomRange");
+    const zoomValue = document.getElementById("zoomValue");
+    const zoomOutButton = document.getElementById("zoomOutButton");
+    const zoomInButton = document.getElementById("zoomInButton");
+    const fitButton = document.getElementById("fitButton");
+    const actualButton = document.getElementById("actualButton");
+    const branchImage = new Image();
+    const resultImage = new Image();
+    const PROTECTION_LINE_WIDTH = 1;
+    const MAX_ZOOM_PERCENT = 500;
+    const branchStage = branchCanvas.parentElement;
+    const resultStage = resultCanvas.parentElement;
+
+    let args = {};
+    let candidates = [];
+    let activePathById = new Map();
+    let selectedIds = new Set();
+    let resultCandidates = [];
+    let deletedPathById = new Map();
+    let deletedIds = new Set();
+    let existingPathGroups = [];
+    let loadedImages = 0;
+    let fitToWindow = true;
+    let zoomPercent = 100;
+    let selectionStart = null;
+    let selectionRect = null;
+    let suppressBranchClick = false;
+    let syncingScroll = false;
+    let lastScrolledStage = branchStage;
+
+    function sendMessage(type, data) {
+      window.parent.postMessage(
+        {
+          isStreamlitMessage: true,
+          type,
+          ...data,
+        },
+        "*",
+      );
+    }
+
+    function setFrameHeight(height) {
+      sendMessage("streamlit:setFrameHeight", { height });
+    }
+
+    function setValue(value) {
+      sendMessage("streamlit:setComponentValue", {
+        value,
+        dataType: "json",
+      });
+    }
+
+    function parseJsonArray(value) {
+      if (Array.isArray(value)) return value;
+      if (typeof value !== "string" || value.length === 0) return [];
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_error) {
+        return [];
+      }
+    }
+
+    function normalizedPoints(item) {
+      return Array.isArray(item?.points) ? item.points : [];
+    }
+
+    function isDeleteEditor() {
+      return String(args.editor_mode || "protect") === "delete";
+    }
+
+    function drawNormalizedPath(
+      context,
+      path,
+      width,
+      height,
+      color,
+      lineWidth,
+      lineDash = [],
+    ) {
+      if (!Array.isArray(path) || path.length === 0) return;
+      context.save();
+      context.strokeStyle = color;
+      context.lineWidth = lineWidth;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.setLineDash(lineDash);
+      context.beginPath();
+      path.forEach((point, index) => {
+        const x = Number(point[0]) * Math.max(1, width - 1);
+        const y = Number(point[1]) * Math.max(1, height - 1);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      if (path.length === 1) {
+        context.lineTo(
+          Number(path[0][0]) * Math.max(1, width - 1) + 0.01,
+          Number(path[0][1]) * Math.max(1, height - 1) + 0.01,
+        );
+      }
+      context.stroke();
+      context.restore();
+    }
+
+    function applyCanvasDisplaySize(canvas, width, height) {
+      const stage = canvas.parentElement;
+      if (!stage) return;
+      let displayScale = zoomPercent / 100;
+      if (fitToWindow) {
+        const availableWidth = Math.max(1, stage.clientWidth - 2);
+        const availableHeight = Math.max(1, stage.clientHeight - 2);
+        displayScale = Math.min(
+          availableWidth / Math.max(1, width),
+          availableHeight / Math.max(1, height),
+        );
+      }
+      canvas.style.width = `${Math.max(1, width * displayScale)}px`;
+      canvas.style.height = `${Math.max(1, height * displayScale)}px`;
+    }
+
+    function updateDisplaySizes() {
+      applyCanvasDisplaySize(branchCanvas, branchCanvas.width, branchCanvas.height);
+      applyCanvasDisplaySize(resultCanvas, resultCanvas.width, resultCanvas.height);
+      zoomRange.value = String(zoomPercent);
+      zoomValue.textContent = fitToWindow ? "自适应" : `${zoomPercent}%`;
+    }
+
+    function updateFrameHeight() {
+      window.requestAnimationFrame(() => {
+        const wrap = document.querySelector(".wrap");
+        setFrameHeight(Math.ceil((wrap?.scrollHeight || 700) + 2));
+      });
+    }
+
+    function setZoom(percent) {
+      fitToWindow = false;
+      zoomPercent = Math.max(
+        25,
+        Math.min(MAX_ZOOM_PERCENT, Math.round(Number(percent) || 100)),
+      );
+      updateDisplaySizes();
+      updateFrameHeight();
+    }
+
+    function activePaths() {
+      return Array.from(selectedIds)
+        .map((id) => activePathById.get(id))
+        .filter(Boolean);
+    }
+
+    function deletedPaths() {
+      return Array.from(deletedIds)
+        .map((id) => deletedPathById.get(id))
+        .filter(Boolean);
+    }
+
+    function canvasEventPosition(canvas, event) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (event.clientX - rect.left) * canvas.width / Math.max(rect.width, 1),
+        y: (event.clientY - rect.top) * canvas.height / Math.max(rect.height, 1),
+      };
+    }
+
+    function drawSelectionRectangle(context) {
+      if (!selectionRect) return;
+      const left = Math.min(selectionRect.startX, selectionRect.endX);
+      const top = Math.min(selectionRect.startY, selectionRect.endY);
+      const width = Math.abs(selectionRect.endX - selectionRect.startX);
+      const height = Math.abs(selectionRect.endY - selectionRect.startY);
+      context.save();
+      context.fillStyle = "rgba(0, 184, 107, 0.12)";
+      context.strokeStyle = "#00B86B";
+      context.lineWidth = 1;
+      context.setLineDash([5, 4]);
+      context.fillRect(left, top, width, height);
+      context.strokeRect(left, top, width, height);
+      context.restore();
+    }
+
+    function synchronizeStageScroll(source, target) {
+      if (syncingScroll) return;
+      const sourceMaxLeft = Math.max(0, source.scrollWidth - source.clientWidth);
+      const sourceMaxTop = Math.max(0, source.scrollHeight - source.clientHeight);
+      const targetMaxLeft = Math.max(0, target.scrollWidth - target.clientWidth);
+      const targetMaxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+      syncingScroll = true;
+      target.scrollLeft = sourceMaxLeft > 0
+        ? source.scrollLeft / sourceMaxLeft * targetMaxLeft
+        : 0;
+      target.scrollTop = sourceMaxTop > 0
+        ? source.scrollTop / sourceMaxTop * targetMaxTop
+        : 0;
+      window.requestAnimationFrame(() => { syncingScroll = false; });
+    }
+
+    function synchronizeCurrentViewport() {
+      const target = lastScrolledStage === branchStage ? resultStage : branchStage;
+      synchronizeStageScroll(lastScrolledStage, target);
+    }
+
+    function drawBranch() {
+      const width = Math.max(
+        1,
+        Number(args.branch_image_width || branchImage.naturalWidth || 1),
+      );
+      const height = Math.max(
+        1,
+        Number(args.branch_image_height || branchImage.naturalHeight || 1),
+      );
+      branchCanvas.width = width;
+      branchCanvas.height = height;
+      branchContext.clearRect(0, 0, width, height);
+      branchContext.drawImage(branchImage, 0, 0, width, height);
+
+      const color = String(args.active_branch_color || "#00B86B");
+      for (const item of activePaths()) {
+        drawNormalizedPath(
+          branchContext,
+          normalizedPoints(item),
+          width,
+          height,
+          color,
+          PROTECTION_LINE_WIDTH,
+        );
+      }
+      drawSelectionRectangle(branchContext);
+      branchMeta.textContent =
+        isDeleteEditor()
+          ? `下一阶段输入实际画布 ${width} × ${height} px；当前待删除 ${activePaths().length} 条。` +
+            "再次点击同一曲线可取消删除；重复框选同一区域可批量取消。"
+          : `分支实际画布 ${width} × ${height} px；当前选择 ${activePaths().length} 条。` +
+            "缩放只改变分支像素尺寸，放入结果图时按归一化坐标重新映射；重复框选可批量取消。";
+      applyCanvasDisplaySize(branchCanvas, width, height);
+    }
+
+    function drawResult() {
+      const width = Math.max(
+        1,
+        Number(args.result_image_width || resultImage.naturalWidth || 1),
+      );
+      const height = Math.max(
+        1,
+        Number(args.result_image_height || resultImage.naturalHeight || 1),
+      );
+      resultCanvas.width = width;
+      resultCanvas.height = height;
+      resultContext.clearRect(0, 0, width, height);
+      resultContext.drawImage(resultImage, 0, 0, width, height);
+
+      const deletionGuideLineWidth = Math.max(
+        2,
+        Math.min(width, height) / 350,
+      );
+      for (const item of deletedPaths()) {
+        const path = normalizedPoints(item);
+        drawNormalizedPath(
+          resultContext,
+          path,
+          width,
+          height,
+          "#FFFFFF",
+          Math.max(3, deletionGuideLineWidth * 1.8),
+        );
+        if (!isDeleteEditor()) {
+          drawNormalizedPath(
+            resultContext,
+            path,
+            width,
+            height,
+            "#EF4444",
+            Math.max(1.25, deletionGuideLineWidth * 0.6),
+            [6, 5],
+          );
+        }
+      }
+      for (const group of existingPathGroups) {
+        const color = String(group?.color || "#00B86B");
+        const paths = Array.isArray(group?.paths) ? group.paths : [];
+        for (const path of paths) {
+          drawNormalizedPath(
+            resultContext,
+            path,
+            width,
+            height,
+            color,
+            PROTECTION_LINE_WIDTH,
+          );
+        }
+      }
+
+      if (!isDeleteEditor()) {
+        const activeColor = String(args.active_branch_color || "#00B86B");
+        for (const item of activePaths()) {
+          drawNormalizedPath(
+            resultContext,
+            normalizedPoints(item),
+            width,
+            height,
+            activeColor,
+            PROTECTION_LINE_WIDTH,
+          );
+        }
+      }
+      resultMeta.textContent =
+        isDeleteEditor()
+          ? `结果实际画布 ${width} × ${height} px；左图选择的 ${deletedPaths().length} 条曲线已实时删除。` +
+            "只有点击“确定”才会替换主页面准备传给下一步的图片。"
+          : `结果实际画布 ${width} × ${height} px；当前待保护 ${activePaths().length} 条，` +
+            `待删除 ${deletedPaths().length} 条（红色虚线）。` +
+            "只有点击“确定”才会提交并替换主页面准备传给下一步的图片。";
+      applyCanvasDisplaySize(resultCanvas, width, height);
+    }
+
+    function drawLegend() {
+      legend.replaceChildren();
+      const items = [];
+      for (const group of existingPathGroups) {
+        items.push({
+          name: String(group?.name || "保护分支"),
+          color: String(group?.color || "#00B86B"),
+        });
+      }
+      items.push({
+        name: String(args.active_branch_name || "当前保护分支"),
+        color: String(args.active_branch_color || "#00B86B"),
+      });
+      if (deletedPaths().length > 0) {
+        items.push({
+          name: `当前分支待删除 ${deletedPaths().length} 条`,
+          color: "#EF4444",
+        });
+      }
+      const seen = new Set();
+      for (const item of items) {
+        const key = `${item.name}-${item.color}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const entry = document.createElement("span");
+        entry.className = "legend-item";
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = item.color;
+        const label = document.createElement("span");
+        label.textContent = item.name;
+        entry.append(swatch, label);
+        legend.append(entry);
+      }
+    }
+
+    function render() {
+      if (!branchImage.complete || !resultImage.complete) return;
+      drawBranch();
+      drawResult();
+      drawLegend();
+      updateDisplaySizes();
+      synchronizeCurrentViewport();
+      updateFrameHeight();
+    }
+
+    function applyArgs(nextArgs) {
+      args = nextArgs || {};
+      branchTitle.textContent = isDeleteEditor()
+        ? "下一阶段输入（点击删除，再次点击取消）"
+        : "分支图片（点击保护，再次点击取消）";
+      resultTitle.textContent = isDeleteEditor()
+        ? "准备传给下一步的结果图片（实时预览）"
+        : "下一阶段输入 / 保护结果（点击删除，再次点击恢复）";
+      candidates = parseJsonArray(
+        args.candidate_curves_json ?? args.candidate_curves,
+      );
+      activePathById = new Map();
+      const activeExisting = parseJsonArray(
+        args.active_existing_paths_json ?? args.active_existing_paths,
+      );
+      for (const item of [...activeExisting, ...candidates]) {
+        if (item?.id) activePathById.set(String(item.id), item);
+      }
+      selectedIds = new Set(
+        parseJsonArray(
+          args.selected_curve_ids_json ?? args.selected_curve_ids,
+        ).map(String),
+      );
+      resultCandidates = parseJsonArray(
+        args.result_candidate_curves_json ?? args.result_candidate_curves,
+      );
+      deletedPathById = new Map();
+      const activeExistingDeleted = parseJsonArray(
+        args.active_existing_deleted_paths_json ??
+          args.active_existing_deleted_paths,
+      );
+      for (const item of [...activeExistingDeleted, ...resultCandidates]) {
+        if (item?.id) deletedPathById.set(String(item.id), item);
+      }
+      deletedIds = new Set(
+        parseJsonArray(
+          args.deleted_curve_ids_json ?? args.deleted_curve_ids,
+        ).map(String),
+      );
+      existingPathGroups = parseJsonArray(
+        args.existing_path_groups_json ?? args.existing_path_groups,
+      );
+      if (isDeleteEditor()) {
+        deletedPathById = new Map(activePathById);
+        selectedIds = deletedIds;
+      }
+      confirmButton.disabled =
+        activePathById.size === 0 && deletedPathById.size === 0;
+
+      loadedImages = 0;
+      const nextBranchSource = args.branch_image_data_url || "";
+      const nextResultSource = args.result_image_data_url || "";
+      if (branchImage.src === nextBranchSource && branchImage.complete) {
+        loadedImages += 1;
+      } else {
+        branchImage.src = nextBranchSource;
+      }
+      if (resultImage.src === nextResultSource && resultImage.complete) {
+        loadedImages += 1;
+      } else {
+        resultImage.src = nextResultSource;
+      }
+      if (loadedImages === 2) render();
+    }
+
+    function imageLoaded() {
+      loadedImages += 1;
+      if (loadedImages >= 2) render();
+    }
+
+    branchImage.addEventListener("load", imageLoaded);
+    resultImage.addEventListener("load", imageLoaded);
+
+    zoomRange.addEventListener("input", () => setZoom(zoomRange.value));
+    zoomOutButton.addEventListener("click", () => setZoom(zoomPercent - 10));
+    zoomInButton.addEventListener("click", () => setZoom(zoomPercent + 10));
+    actualButton.addEventListener("click", () => setZoom(100));
+    fitButton.addEventListener("click", () => {
+      fitToWindow = true;
+      updateDisplaySizes();
+      updateFrameHeight();
+    });
+
+    branchStage.addEventListener("scroll", () => {
+      lastScrolledStage = branchStage;
+      synchronizeStageScroll(branchStage, resultStage);
+    });
+    resultStage.addEventListener("scroll", () => {
+      lastScrolledStage = resultStage;
+      synchronizeStageScroll(resultStage, branchStage);
+    });
+
+    function nearestCandidate(canvas, values, event) {
+      const {x, y} = canvasEventPosition(canvas, event);
+      let best = null;
+      let bestDistanceSquared = Number.POSITIVE_INFINITY;
+
+      for (const candidate of values) {
+        const points = normalizedPoints(candidate);
+        for (const point of points) {
+          const px = Number(point[0]) * Math.max(1, canvas.width - 1);
+          const py = Number(point[1]) * Math.max(1, canvas.height - 1);
+          const distanceSquared = (px - x) ** 2 + (py - y) ** 2;
+          if (distanceSquared < bestDistanceSquared) {
+            bestDistanceSquared = distanceSquared;
+            best = candidate;
+          }
+        }
+      }
+
+      return { best, distance: Math.sqrt(bestDistanceSquared) };
+    }
+
+    branchCanvas.addEventListener("click", (event) => {
+      if (suppressBranchClick) {
+        suppressBranchClick = false;
+        return;
+      }
+      const selectable = Array.from(activePathById.values());
+      const {best, distance} = nearestCandidate(branchCanvas, selectable, event);
+
+      const maximumDistance = Number(args.max_click_distance_px || 14);
+      if (!best || distance > maximumDistance) {
+        branchMeta.textContent =
+          `点击位置附近没有逻辑曲线；最近距离约 ` +
+          `${distance.toFixed(1)} px。`;
+        return;
+      }
+
+      const id = String(best.id);
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      render();
+    });
+
+    branchCanvas.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const point = canvasEventPosition(branchCanvas, event);
+      selectionStart = point;
+      selectionRect = null;
+      branchCanvas.setPointerCapture?.(event.pointerId);
+    });
+
+    branchCanvas.addEventListener("pointermove", (event) => {
+      if (!selectionStart) return;
+      const point = canvasEventPosition(branchCanvas, event);
+      if (
+        Math.abs(point.x - selectionStart.x) < 4 &&
+        Math.abs(point.y - selectionStart.y) < 4
+      ) {
+        return;
+      }
+      selectionRect = {
+        startX: selectionStart.x,
+        startY: selectionStart.y,
+        endX: point.x,
+        endY: point.y,
+      };
+      render();
+    });
+
+    branchCanvas.addEventListener("pointerup", (event) => {
+      if (!selectionStart) return;
+      const point = canvasEventPosition(branchCanvas, event);
+      const left = Math.min(selectionStart.x, point.x);
+      const right = Math.max(selectionStart.x, point.x);
+      const top = Math.min(selectionStart.y, point.y);
+      const bottom = Math.max(selectionStart.y, point.y);
+      const isBoxSelection = right - left >= 4 || bottom - top >= 4;
+      if (isBoxSelection) {
+        const intersectingIds = [];
+        for (const item of activePathById.values()) {
+          const intersects = normalizedPoints(item).some((pathPoint) => {
+            const x = Number(pathPoint[0]) * Math.max(1, branchCanvas.width - 1);
+            const y = Number(pathPoint[1]) * Math.max(1, branchCanvas.height - 1);
+            return x >= left && x <= right && y >= top && y <= bottom;
+          });
+          if (intersects) intersectingIds.push(String(item.id));
+        }
+        const cancelAll = (
+          intersectingIds.length > 0
+          && intersectingIds.every((id) => selectedIds.has(id))
+        );
+        for (const id of intersectingIds) {
+          if (cancelAll) selectedIds.delete(id);
+          else selectedIds.add(id);
+        }
+        suppressBranchClick = true;
+      }
+      selectionStart = null;
+      selectionRect = null;
+      branchCanvas.releasePointerCapture?.(event.pointerId);
+      render();
+    });
+
+    resultCanvas.addEventListener("click", (event) => {
+      if (isDeleteEditor()) return;
+      const selectable = Array.from(deletedPathById.values());
+      const {best, distance} = nearestCandidate(resultCanvas, selectable, event);
+      const maximumDistance = Number(args.max_click_distance_px || 14);
+      if (!best || distance > maximumDistance) {
+        resultMeta.textContent =
+          `点击位置附近没有逻辑曲线；最近距离约 ${distance.toFixed(1)} px。`;
+        return;
+      }
+
+      const id = String(best.id);
+      if (deletedIds.has(id)) deletedIds.delete(id);
+      else deletedIds.add(id);
+      render();
+    });
+
+    confirmButton.addEventListener("click", () => {
+      confirmButton.disabled = true;
+      confirmButton.textContent = "正在提交…";
+      setValue({
+        action: "confirm",
+        active_branch_id: String(args.active_branch_id || ""),
+        selected_curves: isDeleteEditor() ? [] : activePaths(),
+        deleted_curves: isDeleteEditor() ? activePaths() : deletedPaths(),
+        nonce: `${Date.now()}-${Math.random()}`,
+      });
+    });
+
+    window.addEventListener("message", (event) => {
+      if (event.data.type !== "streamlit:render") return;
+      applyArgs(event.data.args);
+    });
+
+    window.addEventListener("resize", render);
+
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    setFrameHeight(850);
+  </script>
+</body>
+</html>

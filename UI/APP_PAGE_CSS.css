@@ -47,6 +47,18 @@
   padding-bottom: 3rem;
 }
 
+/* 边缘保护分支是图像工作台，需要明显大于 Streamlit 默认 large 弹窗。 */
+[data-testid="stDialog"] [role="dialog"] {
+  width: min(96vw, 1600px) !important;
+  max-width: min(96vw, 1600px) !important;
+  max-height: 94vh !important;
+  overflow-y: auto !important;
+}
+
+[data-testid="stDialog"] [role="dialog"] > div {
+  width: 100%;
+}
+
 h1 {
   color: var(--qx-text);
   font-size: 2.35rem !important;
@@ -256,5 +268,24 @@ h2, h3 {
 code,
 pre {
   border-radius: 8px !important;
+}
+
+.qx-site-footer {
+  margin-top: 3rem;
+  padding: 1.25rem 0 0.5rem;
+  border-top: 1px solid #e3e8f0;
+  color: #667085;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.qx-site-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.qx-site-footer a:hover {
+  color: #344054;
+  text-decoration: underline;
 }
 </style>

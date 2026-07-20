@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import streamlit as st
@@ -14,6 +16,7 @@ from UI.gia_image import (
     COLLISION_MODE_OFF,
     DEFAULT_TEMPLATE_GIA,
     ImageGiaSettings,
+    build_image_final_preview,
     build_image_gia_bytes,
     grid_layout,
     grid_units_to_meters,
@@ -23,12 +26,14 @@ from UI.gia_image import (
     scale_image_for_parsing_xy,
 )
 from UI.build_gia_objects import TYPE_NAME_TO_TEMPLATE_ID
+from UI.task_ui import run_heavy_action
 
 
 RESIZE_BOX_COMPONENT = components.declare_component(
     "resize_box",
     path=str(Path(__file__).resolve().parent / "components" / "resize_box"),
 )
+_FINAL_PREVIEW_CACHE_KEY = "image_to_gia_final_preview"
 
 
 def image_data_url(image) -> str:
@@ -52,6 +57,17 @@ def sync_dragged_scale(component_value: dict | None) -> None:
         st.session_state["image_to_gia_scale_x_percent"] = scale_x
         st.session_state["image_to_gia_scale_y_percent"] = scale_y
         st.rerun()
+
+
+def final_preview_signature(image, settings: ImageGiaSettings) -> str:
+    digest = hashlib.sha256()
+    digest.update(image.mode.encode("utf-8"))
+    digest.update(str(image.size).encode("ascii"))
+    digest.update(image.tobytes())
+    digest.update(
+        json.dumps(asdict(settings), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    )
+    return digest.hexdigest()
 
 
 def render_image_to_gia_page() -> None:
@@ -336,6 +352,16 @@ def render_image_to_gia_page() -> None:
         key="image_to_gia_template_path",
     )
     st.markdown("### 5.3 输出设置")
+    enable_out_of_range_run = st.checkbox(
+        "超出范围仍运行", value=False, key="image_to_gia_enable_out_of_range_run",
+        help="开启后，元件超出加载范围时仍保持运行。",
+    )
+    display_mode_label = st.selectbox(
+        "超出范围显示", ["默认", "永久显示", "永久以最高精度显示"],
+        key="image_to_gia_out_of_range_display_mode",
+        help="控制元件超出加载范围后的显示策略。",
+    )
+    out_of_range_display_mode = {"默认": 0, "永久显示": 1, "永久以最高精度显示": 2}[display_mode_label]
     output_name = st.text_input("输出文件名", value=f"{Path(uploaded.name).stem}_image_pixels.gia")
 
     st.markdown("---")
@@ -378,13 +404,6 @@ def render_image_to_gia_page() -> None:
         st.warning("目标尺寸无效。")
         return
 
-    st.markdown("---")
-    st.markdown("## 7. 生成与下载")
-    st.caption("确认上方参数后开始生成。生成完成后可下载 GIA、对象 JSON 和摘要 JSON。")
-    submitted = st.button("生成图片 GIA", type="primary", key="image_to_gia_build", use_container_width=True)
-    if not submitted:
-        return
-
     settings = ImageGiaSettings(
         target_width_m=float(target_width_m),
         target_height_m=float(target_height_m),
@@ -397,14 +416,78 @@ def render_image_to_gia_page() -> None:
         background_rgb=background_rgb,
         background_tolerance=int(background_tolerance),
         collision_mode=collision_mode,
+        enable_out_of_range_run=bool(enable_out_of_range_run),
+        out_of_range_display_mode=int(out_of_range_display_mode),
     )
+    preview_signature = final_preview_signature(scaled_image, settings)
+    st.markdown("### 6.1 最终图片预览")
+    st.caption("按当前导出对象反绘，包含采样、透明过滤、背景移除、矩形合并、颜色和最终透明度效果。")
+    preview_clicked = st.button(
+        "生成 / 刷新最终图片预览",
+        key="image_to_gia_build_final_preview",
+        use_container_width=True,
+    )
+    if preview_clicked:
+        try:
+            def build_preview(callback):
+                callback(5, "正在准备最终图片预览")
+                value = build_image_final_preview(
+                    scaled_image,
+                    settings,
+                )
+                callback(100, "最终图片预览生成完成")
+                return value
+
+            final_preview, final_preview_summary = run_heavy_action(
+                "最终图片预览",
+                build_preview,
+            )
+        except Exception as exc:
+            st.error(f"最终图片预览生成失败：{exc}")
+        else:
+            st.session_state[_FINAL_PREVIEW_CACHE_KEY] = {
+                "signature": preview_signature,
+                "image": final_preview,
+                "summary": final_preview_summary,
+            }
+
+    cached_preview = st.session_state.get(_FINAL_PREVIEW_CACHE_KEY)
+    if isinstance(cached_preview, dict) and cached_preview.get("signature") == preview_signature:
+        final_preview = cached_preview["image"]
+        final_preview_summary = cached_preview["summary"]
+        st.image(
+            final_preview,
+            caption=(
+                f"最终图片：{final_preview.width} × {final_preview.height} px；"
+                f"对应 {int(final_preview_summary['object_count']):,} 个 GIA 生成单位。"
+            ),
+            use_container_width=True,
+        )
+    else:
+        st.info("当前参数尚未生成最终图片预览。点击上方按钮后显示；参数变化后需要重新生成。")
+
+    st.markdown("---")
+    st.markdown("## 7. 生成与下载")
+    st.caption("确认上方参数后开始生成。生成完成后可下载 GIA、对象 JSON 和摘要 JSON。")
+    submitted = st.button("生成图片 GIA", type="primary", key="image_to_gia_build", use_container_width=True)
+    if not submitted:
+        return
+
     try:
-        with st.spinner("正在解析像素并生成 GIA..."):
-            gia_data, summary, objects_json = build_image_gia_bytes(
+        def build_gia(callback):
+            callback(5, "正在解析像素并准备 GIA 对象")
+            value = build_image_gia_bytes(
                 image=scaled_image,
                 settings=settings,
                 template_path=Path(template_path_text),
             )
+            callback(100, "图片 GIA 生成完成")
+            return value
+
+        gia_data, summary, objects_json = run_heavy_action(
+            "图片 GIA 导出",
+            build_gia,
+        )
     except Exception as exc:
         st.error(f"图片 GIA 生成失败：{exc}")
         return

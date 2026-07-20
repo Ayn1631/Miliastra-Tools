@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIPTS_DIR = SCRIPT_DIR
@@ -48,6 +48,8 @@ class ImageGiaSettings:
     background_rgb: tuple[int, int, int] | None = None
     background_tolerance: int = 0
     collision_mode: str = COLLISION_MODE_OFF
+    enable_out_of_range_run: bool = False
+    out_of_range_display_mode: int = 0
 
 
 def collision_mode_flags(mode: str) -> tuple[bool, bool]:
@@ -438,6 +440,8 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
                         },
                         "collision": enable_collision,
                         "climb": enable_climb,
+                        "enable_out_of_range_run": bool(settings.enable_out_of_range_run),
+                        "out_of_range_display_mode": int(settings.out_of_range_display_mode),
                     }
                 )
                 next_entity_id += 1
@@ -465,6 +469,8 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
                         },
                         "collision": enable_collision,
                         "climb": enable_climb,
+                        "enable_out_of_range_run": bool(settings.enable_out_of_range_run),
+                        "out_of_range_display_mode": int(settings.out_of_range_display_mode),
                     }
                 )
                 next_entity_id += 1
@@ -499,11 +505,64 @@ def image_to_objects(image: Image.Image, settings: ImageGiaSettings) -> tuple[li
         "collision_mode": settings.collision_mode,
         "enable_native_collision": enable_collision,
         "enable_climb": enable_climb,
+        "enable_out_of_range_run": bool(settings.enable_out_of_range_run),
+        "out_of_range_display_mode": int(settings.out_of_range_display_mode),
         "coordinate_rule": "position is the center of each pixel block bounding box on a 0.01 meter grid",
         "scale_rule": "scale x/y/z equals grid-aligned bounding-box size in meters; adjacent blocks share edges without gaps",
         "size_priority": "seamless grid first; actual width/height may differ from requested size",
     }
     return objects, summary
+
+
+def build_image_final_preview(
+    image: Image.Image,
+    settings: ImageGiaSettings,
+) -> tuple[Image.Image, dict[str, Any]]:
+    """按最终导出对象反绘 RGBA 图片，保证预览与 GIA 对象参数一致。"""
+    objects, summary = image_to_objects(image, settings)
+    width_px, height_px = map(int, summary["sampled_size_px"])
+    cell_width_m = float(summary["cell_size_m"]["width"])
+    cell_height_m = float(summary["cell_size_m"]["height"])
+    actual_width_m = float(summary["actual_size_m"]["width"])
+    actual_height_m = float(summary["actual_size_m"]["height"])
+    canvas = Image.new("RGBA", (width_px, height_px), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    for item in objects:
+        position_x, _, position_z = map(float, item["position"])
+        scale_x, _, scale_z = map(float, item["scale"])
+        col = int(round((position_x - scale_x * 0.5 + actual_width_m * 0.5) / cell_width_m))
+        row = int(round((actual_height_m * 0.5 - position_z - scale_z * 0.5) / cell_height_m))
+        rect_width_px = max(1, int(round(scale_x / cell_width_m)))
+        rect_height_px = max(1, int(round(scale_z / cell_height_m)))
+        color = item.get("color", {})
+        rgb = color.get("rgb", [255, 255, 255])
+        opacity_percent = max(0.0, min(100.0, float(color.get("opacity", 100.0))))
+        rgba = (
+            int(rgb[0]),
+            int(rgb[1]),
+            int(rgb[2]),
+            int(round(opacity_percent / 100.0 * 255.0)),
+        )
+        draw.rectangle(
+            (
+                col,
+                row,
+                col + rect_width_px - 1,
+                row + rect_height_px - 1,
+            ),
+            fill=rgba,
+        )
+
+    alpha = canvas.getchannel("A")
+    transparent_pixels = sum(1 for value in alpha.getdata() if value == 0)
+    return canvas, {
+        "sampled_size_px": [width_px, height_px],
+        "object_count": len(objects),
+        "transparent_pixel_count": int(transparent_pixels),
+        "merge_rectangles": bool(settings.merge_rectangles),
+        "source_summary": summary,
+    }
 
 
 def build_image_gia_bytes(

@@ -1,4 +1,10 @@
 streamlit==1.45.1
-Pillow==12.3.0
-protobuf==7.35.1
-grpcio-tools==1.82.0
+Pillow==11.3.0
+protobuf==6.33.6
+numpy>=2.0,<3.0
+opencv-contrib-python-headless==5.0.0.93
+scipy==1.17.1
+simplification==1.0.0
+rq==2.10.0
+redis==6.4.0
+cloudpickle==3.1.2

@@ -5,12 +5,20 @@ import copy
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 HEADER_SIZE = 20
 FOOTER_SIZE = 4
 DEFAULT_ENTITY_ID_START = 1_078_400_000
+OUT_OF_RANGE_DISPLAY_DEFAULT = 0
+OUT_OF_RANGE_DISPLAY_PERMANENT = 1
+OUT_OF_RANGE_DISPLAY_PERMANENT_HIGHEST_PRECISION = 2
+OUT_OF_RANGE_DISPLAY_MODES = {
+    OUT_OF_RANGE_DISPLAY_DEFAULT,
+    OUT_OF_RANGE_DISPLAY_PERMANENT,
+    OUT_OF_RANGE_DISPLAY_PERMANENT_HIGHEST_PRECISION,
+}
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parents[1]
@@ -138,6 +146,13 @@ def _build_embedded_gia_pb2():
     _add_field(static_collider, "enable_native_collision", 1, TYPE.TYPE_BOOL)
     _add_field(static_collider, "enable_climb", 2, TYPE.TYPE_BOOL)
 
+    field_22 = _add_message(file_proto, "Field22")
+    _add_field(field_22, "enable_out_of_range_run", 1, TYPE.TYPE_BOOL)
+    _add_field(field_22, "field_501", 501, TYPE.TYPE_UINT32)
+
+    field_30 = _add_message(file_proto, "Field30")
+    _add_field(field_30, "display_mode", 2, TYPE.TYPE_UINT32)
+
     model_display = _add_message(file_proto, "ModelDisplay")
     _add_field(model_display, "field_1", 1, TYPE.TYPE_UINT32)
     _add_field(model_display, "argb_color", 3, TYPE.TYPE_UINT32)
@@ -161,6 +176,20 @@ def _build_embedded_gia_pb2():
         15,
         TYPE.TYPE_MESSAGE,
         type_name=".game.gia.embedded.StaticCollider",
+    )
+    _add_field(
+        component,
+        "field_22",
+        22,
+        TYPE.TYPE_MESSAGE,
+        type_name=".game.gia.embedded.Field22",
+    )
+    _add_field(
+        component,
+        "field_30",
+        30,
+        TYPE.TYPE_MESSAGE,
+        type_name=".game.gia.embedded.Field30",
     )
     _add_field(
         component,
@@ -299,6 +328,15 @@ def component_by_type(entity, component_type: int):
     raise ValueError(f"component type not found: {component_type}")
 
 
+def ensure_component_by_type(entity, component_type: int):
+    for component in entity.data.components:
+        if component.component_type == component_type:
+            return component
+    component = entity.data.components.add()
+    component.component_type = component_type
+    return component
+
+
 def set_vec3(vec, values: list[float] | tuple[float, float, float]) -> None:
     if len(values) != 3:
         raise ValueError(f"vec3 requires exactly 3 values: {values}")
@@ -398,6 +436,32 @@ def set_static_collider(entity, enable_collision: bool, enable_climb: bool) -> N
     collider.enable_climb = bool(enable_climb)
 
 
+def set_load_optimization(
+    entity,
+    enable_out_of_range_run: bool,
+    out_of_range_display_mode: int,
+) -> None:
+    display_mode = int(out_of_range_display_mode)
+    if display_mode not in OUT_OF_RANGE_DISPLAY_MODES:
+        raise ValueError(
+            "out_of_range_display_mode must be 0 (default), 1 (permanent), or 2 "
+            f"(permanent highest precision), got {out_of_range_display_mode}"
+        )
+
+    run_component = ensure_component_by_type(entity, 12).field_22
+    run_component.Clear()
+    if enable_out_of_range_run:
+        run_component.enable_out_of_range_run = True
+    else:
+        # The verified disabled representation is field_501 = 1.
+        run_component.field_501 = 1
+
+    display_component = ensure_component_by_type(entity, 20).field_30
+    display_component.Clear()
+    if display_mode:
+        display_component.display_mode = display_mode
+
+
 def template_assets_by_id(collection) -> dict[int, object]:
     result = {}
     for asset in collection.assets:
@@ -449,6 +513,8 @@ def update_entity_asset(
     rgb, opacity_percent = parse_color(item.get("color", item.get("rgb")))
     enable_collision = bool(item.get("enable_collision", item.get("collision", True)))
     enable_climb = bool(item.get("enable_climb", item.get("climb", True)))
+    enable_out_of_range_run = bool(item.get("enable_out_of_range_run", False))
+    out_of_range_display_mode = int(item.get("out_of_range_display_mode", 0))
 
     asset.meta.asset_id = entity_id
     asset.name = name
@@ -464,6 +530,7 @@ def update_entity_asset(
     set_transform(entity, position, rotation, scale)
     display = set_model_display(entity, rgb, opacity_percent)
     set_static_collider(entity, enable_collision, enable_climb)
+    set_load_optimization(entity, enable_out_of_range_run, out_of_range_display_mode)
 
     return {
         "entity_id": entity_id,
@@ -476,6 +543,8 @@ def update_entity_asset(
         "display": display,
         "enable_native_collision": enable_collision,
         "enable_climb": enable_climb,
+        "enable_out_of_range_run": enable_out_of_range_run,
+        "out_of_range_display_mode": out_of_range_display_mode,
     }
 
 
@@ -496,16 +565,30 @@ def build_gia(
     output_path: Path,
     summary_path: Path | None,
     entity_id_start: int,
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> dict[str, Any]:
+    def report(percent: int, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(max(0, min(100, int(percent))), message)
+
+    report(2, "正在载入 GIA 模板")
     gia_pb2 = get_gia_pb2()
     collection, header, footer = load_collection(gia_pb2, template_path)
     templates = template_assets_by_id(collection)
+    report(8, "正在读取对象列表")
     objects = load_objects(objects_path)
 
     new_assets = []
     records = []
     used_ids: set[int] = set()
+    total_objects = len(objects)
+    update_stride = max(1, total_objects // 100) if total_objects else 1
     for index, item in enumerate(objects):
+        if index % update_stride == 0:
+            report(
+                10 + round(75 * index / max(total_objects, 1)),
+                f"正在复制模板并写入对象：{index:,}/{total_objects:,}",
+            )
         template_id = resolve_template_id(item)
         if template_id not in templates:
             raise ValueError(f"template_id {template_id} not found in template GIA")
@@ -518,12 +601,14 @@ def build_gia(
         records.append(update_entity_asset(asset, item, entity_id, template_id))
         new_assets.append(asset)
 
+    report(87, f"对象写入完成，共 {len(new_assets):,} 个")
     del collection.assets[:]
     collection.assets.extend(new_assets)
     collection.source_path = f"generated\\{output_path.name}"
     if not collection.version:
         collection.version = "6.7.0"
 
+    report(92, "正在序列化并写入 GIA 文件")
     write_collection(collection, header, footer, output_path)
     summary = {
         "template": str(template_path),
@@ -536,8 +621,10 @@ def build_gia(
         "records": records,
     }
     if summary_path:
+        report(97, "正在写入生成摘要")
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report(100, "GIA 对象构建完成")
     return summary
 
 
