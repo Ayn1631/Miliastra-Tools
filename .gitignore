@@ -1,1 +1,35 @@
+# Ignore everything by default.
+
+
+# Keep repository metadata and docs.
+.history/
+.vscode/
+.agents/
+.external/
 __pycache__/
+tests/
+*.zip
+
+# YSM2Gia
+output/
+bbmodel/
+
+Get_model/
+
+bak/
+
+.cph/
+
+# Miliastra-Tools
+.miliastra_backup/
+.pytest_cache
+
+archive/
+input/
+output_*/
+bak/
+build/
+结构体导入导出分析/
+.pyc/
+
+.*/

@@ -12,8 +12,9 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from UI.build_gia_objects import TYPE_NAME_TO_TEMPLATE_ID
-from UI.image_to_gia import (
+from miliastra_core.export.builder import TYPE_NAME_TO_TEMPLATE_ID
+from miliastra_core.export.decoration import MAX_DECORATIONS_PER_PARENT
+from miliastra_core.image import (
     COLLISION_MODE_NATIVE,
     COLLISION_MODE_NATIVE_AND_CLIMB,
     COLLISION_MODE_OFF,
@@ -34,7 +35,7 @@ from UI.sketch_edge_protection import (
     protection_branch_color,
     render_edge_protection_picker,
 )
-from UI.sketch_to_gia import (
+from miliastra_core.sketch import (
     COLOR_MODE_PASSTHROUGH,
     LONG_AXIS_X,
     LONG_AXIS_Z,
@@ -493,6 +494,7 @@ def _render_edge_protection_dialog(
             f"sketch_protection_branch_selector_{raw_digest}_"
             f"{int(state.get('selector_version', 0))}"
         ),
+        help="选择要编辑和预览的保护分支；每个分支可使用独立的线稿识别参数。",
     )
     state["active_branch_id"] = selected_id
     st.session_state[_PROTECTION_STATE_KEY] = state
@@ -511,6 +513,7 @@ def _render_edge_protection_dialog(
             "分支名称",
             value=str(branch.get("name", "保护分支")),
             key=f"sketch_protection_name_{branch['id']}",
+            help="为当前保护分支设置便于识别的名称，不影响图像处理结果。",
         )
     with col_add:
         st.write("")
@@ -730,6 +733,7 @@ def render_sketch_to_gia_page() -> None:
         "选择图片文件",
         type=["png", "jpg", "jpeg", "webp", "bmp"],
         key="sketch_to_gia_upload",
+        help="选择要进行边缘检测或直接作为线稿的源图片。",
     )
     if uploaded is None:
         st.info("先上传图片。可从普通图片检测边缘，也可把上传图直接作为线稿图。")
@@ -747,23 +751,29 @@ def render_sketch_to_gia_page() -> None:
 
     # ───────────────────────────── 阶段 1：缩放 ─────────────────────────────
     with tab_scale:
-        lock_scale = st.checkbox("等比缩放", value=True, key="sketch_to_gia_scale_lock")
+        lock_scale = st.checkbox(
+            "等比缩放", value=True, key="sketch_to_gia_scale_lock",
+            help="开启后 X/Y 使用相同缩放百分比，避免预处理图像变形。",
+        )
         col_scale_x, col_scale_y = st.columns(2)
         with col_scale_x:
             scale_x_percent = st.number_input(
-                "X 缩放（%）", 1, 400, 100, 1, key="sketch_to_gia_scale_x"
+                "X 缩放（%）", 1, 400, 100, 1, key="sketch_to_gia_scale_x",
+                help="调整预处理画布的水平尺寸；100% 表示页面计算的显示基准尺寸。",
             )
         if lock_scale:
             scale_y_percent = int(scale_x_percent)
             with col_scale_y:
                 st.number_input(
                     "Y 缩放（%）", 1, 400, int(scale_y_percent), 1,
-                    disabled=True, key="sketch_to_gia_scale_y_locked"
+                    disabled=True, key="sketch_to_gia_scale_y_locked",
+                    help="等比模式下自动跟随 X 缩放百分比。",
                 )
         else:
             with col_scale_y:
                 scale_y_percent = st.number_input(
-                    "Y 缩放（%）", 1, 400, 100, 1, key="sketch_to_gia_scale_y"
+                    "Y 缩放（%）", 1, 400, 100, 1, key="sketch_to_gia_scale_y",
+                    help="调整预处理画布的垂直尺寸；关闭等比缩放后可独立设置。",
                 )
         st.caption("原图会先适配到约 960×640 的合理位置并定义为显示 100%；这里的百分比基于该显示基准改变预览大小。")
 
@@ -1148,12 +1158,14 @@ def render_sketch_to_gia_page() -> None:
     with tab_skeleton:
         auto_thin = st.checkbox(
             "自动把宽线细化为单像素中心骨架", value=True,
-            key="sketch_to_gia_auto_thin"
+            key="sketch_to_gia_auto_thin",
+            help="把有宽度的线稿压缩为中心路径，便于后续用少量长方体拟合。",
         )
         if auto_thin:
             wide_line_search_radius = st.selectbox(
                 "宽线探索半径", [0, 2, 4, 6, 8], index=2,
-                key="sketch_wide_line_radius"
+                key="sketch_wide_line_radius",
+                help="搜索宽线中心的邻域半径，单位为像素；较大值适合更粗的线条。",
             )
         else:
             wide_line_search_radius = 0
@@ -1235,7 +1247,8 @@ def render_sketch_to_gia_page() -> None:
     with tab_fit:
         simplify_tolerance = st.number_input(
             "曲线合并误差阈值（px）", 0.0, 100.0, 1.5, 0.1,
-            key="sketch_simplify_tolerance"
+            key="sketch_simplify_tolerance",
+            help="允许简化线段偏离原曲线的最大像素误差；越大生成的基元越少。",
         )
         min_segment_length = st.number_input(
             "排除线段长度（px，预算前过滤）",
@@ -1248,45 +1261,53 @@ def render_sketch_to_gia_page() -> None:
         )
         max_primitives = st.number_input(
             "期望最大基元数", 1, 200000, 500, 50,
-            key="sketch_max_primitives"
+            key="sketch_max_primitives",
+            help="拟合算法尝试接近的长方体数量上限；越大细节越多，导出也更重。",
         )
         st.info("最终拟合严格读取上一个 Tab 当前有效的中心骨架预览图。该预览缺失或参数过期时，才自动补算并写回预览缓存。算法随后探索误差阈值，使数量尽量靠近期望值，并允许约 12% 浮动。")
 
         st.markdown("#### 最终米制大小")
         lock_output_aspect = st.checkbox(
-            "锁定输出宽高比", value=True, key="sketch_lock_output_aspect"
+            "锁定输出宽高比", value=True, key="sketch_lock_output_aspect",
+            help="开启后根据当前图像比例自动计算 Z 总高度，避免线稿拉伸。",
         )
         target_width_m = st.number_input(
             "总宽度 X（米）", 0.01, 500.0, 10.0, 0.01,
-            key="sketch_target_width"
+            key="sketch_target_width",
+            help="曲线拟合结果在世界 X 方向的目标总宽度。",
         )
         target_aspect_height = float(target_width_m) * scaled_height / max(scaled_width, 1)
         if lock_output_aspect:
             target_height_m = max(0.01, target_aspect_height)
             st.number_input(
                 "总高度 Z（米）", 0.01, 500.0, float(target_height_m), 0.01,
-                disabled=True, key="sketch_target_height_locked"
+                disabled=True, key="sketch_target_height_locked",
+                help="锁定宽高比时，由 X 总宽度和图像比例自动计算。",
             )
         else:
             target_height_m = st.number_input(
                 "总高度 Z（米）", 0.01, 500.0, 10.0, 0.01,
-                key="sketch_target_height"
+                key="sketch_target_height",
+                help="曲线拟合结果在世界 Z 方向的目标总高度。",
             )
 
         selected_type = st.selectbox(
             "线段基元", LINE_PRIMITIVE_NAMES,
             index=LINE_PRIMITIVE_NAMES.index("长方体"),
-            key="sketch_to_gia_primitive"
+            key="sketch_to_gia_primitive",
+            help="选择用于表示每段线条的模型资源类型，默认为长方体。",
         )
         axis_label = st.selectbox(
             "长边与线边厚度轴",
             ["X 为长边，Z 为线边厚度", "Z 为长边，X 为线边厚度"],
-            index=0, key="sketch_to_gia_long_axis"
+            index=0, key="sketch_to_gia_long_axis",
+            help="指定长方体模型的哪个本地轴沿线段方向伸展。",
         )
         long_axis = LONG_AXIS_X if axis_label.startswith("X") else LONG_AXIS_Z
         line_thickness_m = st.number_input(
             "线边厚度（米）", 0.0001, 50.0, 0.01, 0.001,
-            format="%.4f", key="sketch_to_gia_line_thickness"
+            format="%.4f", key="sketch_to_gia_line_thickness",
+            help="同时控制曲线基元的平面内短轴宽度和 Y 方向厚度。",
         )
         st.caption("线边厚度同时控制平面内短轴和 Y 向厚度；位置、旋转、缩放均为连续期望值。")
 
@@ -1447,55 +1468,65 @@ def render_sketch_to_gia_page() -> None:
             )
 
         ribbon_lock_output_aspect = st.checkbox(
-            "锁定矩形带输出宽高比", value=True, key="sketch_ribbon_lock_output_aspect"
+            "锁定矩形带输出宽高比", value=True, key="sketch_ribbon_lock_output_aspect",
+            help="开启后按当前图像比例自动计算矩形带的 Z 总高度。",
         )
         ribbon_target_width_m = st.number_input(
-            "矩形带总宽度 X（米）", 0.01, 500.0, 10.0, 0.01, key="sketch_ribbon_target_width"
+            "矩形带总宽度 X（米）", 0.01, 500.0, 10.0, 0.01, key="sketch_ribbon_target_width",
+            help="矩形带拟合结果在世界 X 方向的目标总宽度。",
         )
         ribbon_target_aspect_height = float(ribbon_target_width_m) * scaled_height / max(scaled_width, 1)
         if ribbon_lock_output_aspect:
             ribbon_target_height_m = max(0.01, ribbon_target_aspect_height)
             st.number_input(
                 "矩形带总高度 Z（米）", 0.01, 500.0, float(ribbon_target_height_m), 0.01,
-                disabled=True, key="sketch_ribbon_target_height_locked"
+                disabled=True, key="sketch_ribbon_target_height_locked",
+                help="锁定宽高比时，由矩形带 X 总宽度和图像比例自动计算。",
             )
         else:
             ribbon_target_height_m = st.number_input(
-                "矩形带总高度 Z（米）", 0.01, 500.0, 10.0, 0.01, key="sketch_ribbon_target_height"
+                "矩形带总高度 Z（米）", 0.01, 500.0, 10.0, 0.01, key="sketch_ribbon_target_height",
+                help="矩形带拟合结果在世界 Z 方向的目标总高度。",
             )
 
         col_ra, col_rc, col_rd = st.columns(3)
         with col_ra:
             ribbon_straightness_tolerance_px = st.number_input(
                 "OpenCV 最大断点连接距离（px）", 0.0, 64.0, 1.5, 0.1,
-                key="sketch_ribbon_straightness_tolerance"
+                key="sketch_ribbon_straightness_tolerance",
+                help="允许 OpenCV 将相距较近的断点连成同一中心线段；越大连接越积极。",
             )
         with col_rc:
             ribbon_minimum_length_px = st.number_input(
                 "最短矩形长度（px）", 0.0, 1000.0, 2.0, 0.5,
-                key="sketch_ribbon_minimum_length"
+                key="sketch_ribbon_minimum_length",
+                help="短于该长度的中心线矩形会被过滤，可减少小碎片。",
             )
         with col_rd:
             ribbon_max_primitives = st.number_input(
                 "期望最大矩形基元数", 1, 200000, 500, 50,
-                key="sketch_ribbon_max_primitives"
+                key="sketch_ribbon_max_primitives",
+                help="矩形带算法尝试接近的基元数量上限；覆盖补片可在救援范围内追加。",
             )
 
         col_re, col_rf, col_rg, col_rh = st.columns(4)
         with col_re:
             ribbon_width_scale = st.number_input(
                 "识别线宽倍率", 0.05, 10.0, 1.0, 0.05,
-                key="sketch_ribbon_width_scale"
+                key="sketch_ribbon_width_scale",
+                help="对距离变换估计的线宽进行统一倍率调整；1.0 表示不修正。",
             )
         with col_rf:
             ribbon_minimum_width_px = st.number_input(
                 "最小识别线宽（px）", 0.1, 500.0, 1.0, 0.1,
-                key="sketch_ribbon_minimum_width"
+                key="sketch_ribbon_minimum_width",
+                help="矩形带允许的最小像素宽度，防止生成过细或零宽基元。",
             )
         with col_rg:
             ribbon_joint_overlap_px = st.number_input(
                 "矩形接头重叠（px）", 0.0, 100.0, 1.0, 0.25,
-                key="sketch_ribbon_joint_overlap"
+                key="sketch_ribbon_joint_overlap",
+                help="相邻矩形在接头处额外延长的像素数，用于减少断缝。",
             )
         with col_rh:
             ribbon_target_miss_percent = st.number_input(
@@ -1517,6 +1548,7 @@ def render_sketch_to_gia_page() -> None:
             ["X 为长边，Z 为识别线宽", "Z 为长边，X 为识别线宽"],
             index=0,
             key="sketch_ribbon_long_axis",
+            help="指定长方体模型的哪个本地轴沿矩形带中心线方向伸展。",
         )
         ribbon_long_axis = LONG_AXIS_X if ribbon_axis_label.startswith("X") else LONG_AXIS_Z
         st.caption(
@@ -1645,7 +1677,12 @@ def render_sketch_to_gia_page() -> None:
         st.markdown("## 导出 GIA")
         st.info("导出时可选择使用“曲线拟合”或“矩形带拉升（实验）”结果。系统会优先复用对应有效预览；没有或已过期时，只补算该来源所需阶段。")
 
-        export_source_label = st.radio("导出来源", ["曲线拟合结果", "矩形带拉升实验结果"], horizontal=True, key="sketch_export_source")
+        export_source_label = st.radio(
+            "导出来源", ["曲线拟合结果", "矩形带拉升实验结果"],
+            horizontal=True,
+            key="sketch_export_source",
+            help="选择最终 GIA 使用细化后的曲线线段，还是保留原线宽的矩形带拟合结果。",
+        )
 
         ribbon_export_depth_m = None
         if export_source_label == "矩形带拉升实验结果":
@@ -1662,27 +1699,30 @@ def render_sketch_to_gia_page() -> None:
 
         st.markdown("### 导出外观与碰撞")
         add_white_backing = st.checkbox(
-            "加入纯白长方体叠底", value=True,
-            key="sketch_to_gia_add_backing"
+            "加入纯白长方体叠底（独立静态元件）", value=True,
+            key="sketch_to_gia_add_backing",
+            help="开启装饰物包装时，叠底仍作为单独的普通静态元件导出，不进入空模型的装饰物列表。",
         )
         backing_thickness_m = st.number_input(
             "叠底厚度（米）", 0.0001, 50.0, 0.01, 0.001,
             format="%.4f", disabled=not add_white_backing,
-            key="sketch_to_gia_backing_thickness"
+            key="sketch_to_gia_backing_thickness",
+            help="独立纯白叠底在 Y 方向的厚度；其底面贴地，线条会放在顶面。",
         )
 
         st.markdown("#### 线稿颜色")
         col_out_r, col_out_g, col_out_b = st.columns(3)
         with col_out_r:
-            output_r = st.number_input("输出 R", 0, 255, 0, 1, key="sketch_output_r")
+            output_r = st.number_input("输出 R", 0, 255, 0, 1, key="sketch_output_r", help="导出线稿颜色的红色通道，取值 0–255。")
         with col_out_g:
-            output_g = st.number_input("输出 G", 0, 255, 0, 1, key="sketch_output_g")
+            output_g = st.number_input("输出 G", 0, 255, 0, 1, key="sketch_output_g", help="导出线稿颜色的绿色通道，取值 0–255。")
         with col_out_b:
-            output_b = st.number_input("输出 B", 0, 255, 0, 1, key="sketch_output_b")
+            output_b = st.number_input("输出 B", 0, 255, 0, 1, key="sketch_output_b", help="导出线稿颜色的蓝色通道，取值 0–255。")
 
         collision_label = st.radio(
             "碰撞模式", ["关闭碰撞", "开启原生碰撞", "开启碰撞和攀爬"],
-            horizontal=True, key="sketch_to_gia_collision"
+            horizontal=True, key="sketch_to_gia_collision",
+            help="开启装饰物包装时，碰撞和攀爬由独立的纯白叠底承担，线稿装饰物本身不写入碰撞。",
         )
         collision_mode = {
             "关闭碰撞": COLLISION_MODE_OFF,
@@ -1700,6 +1740,58 @@ def render_sketch_to_gia_page() -> None:
         )
         out_of_range_display_mode = {"默认": 0, "永久显示": 1, "永久以最高精度显示": 2}[display_mode_label]
 
+        st.markdown("#### 装饰物包装")
+        decoration_packaging = st.checkbox(
+            "使用空模型包装装饰物",
+            value=True,
+            key="sketch_to_gia_decoration_packaging",
+            help="按数量分组，但所有空模型都位于全部几何体的统一组合包围盒中心。",
+        )
+        max_decorations_per_parent = st.number_input(
+            "每个空模型最多装饰物",
+            min_value=1,
+            max_value=MAX_DECORATIONS_PER_PARENT,
+            value=MAX_DECORATIONS_PER_PARENT,
+            step=1,
+            disabled=not decoration_packaging,
+            key="sketch_to_gia_max_decorations_per_parent",
+            help="单个空模型最多可编辑装饰物数量；上限为 999。",
+        )
+        with st.expander("空模型属性", expanded=False):
+            wrapper_static = st.checkbox(
+                "空模型转为静态元件",
+                value=False,
+                disabled=not decoration_packaging,
+                key="sketch_to_gia_wrapper_static",
+                help="写入静态元件标记；静态空模型在编辑器中的入口可能与动态元件不同。",
+            )
+            st.caption("线稿包装的父空模型和子装饰物固定关闭碰撞/攀爬；需要物理表面时使用独立纯白叠底。")
+            wrapper_enable_out_of_range_run = st.checkbox(
+                "空模型超出范围仍运行",
+                value=False,
+                disabled=not decoration_packaging,
+                key="sketch_to_gia_wrapper_enable_out_of_range_run",
+                help="开启后，空模型主元件超出加载范围时仍保持运行。",
+            )
+            wrapper_display_label = st.selectbox(
+                "空模型超出范围显示",
+                ["默认", "永久显示", "永久以最高精度显示"],
+                disabled=not decoration_packaging,
+                key="sketch_to_gia_wrapper_out_of_range_display_mode",
+                help="控制空模型主元件的超范围显示和 LOD 策略。",
+            )
+        wrapper_display_mode = {
+            "默认": 0,
+            "永久显示": 1,
+            "永久以最高精度显示": 2,
+        }[wrapper_display_label]
+        if (
+            decoration_packaging
+            and collision_mode != COLLISION_MODE_OFF
+            and not add_white_backing
+        ):
+            st.warning("装饰物本身没有有效碰撞；请开启纯白长方体叠底以承载碰撞和攀爬。")
+
         export_base_settings = ribbon_settings if export_source_label == "矩形带拉升实验结果" else settings
         export_result_signature = ribbon_signature if export_source_label == "矩形带拉升实验结果" else fit_signature
         export_settings = replace(
@@ -1715,14 +1807,23 @@ def render_sketch_to_gia_page() -> None:
             collision_mode=collision_mode,
             enable_out_of_range_run=bool(enable_out_of_range_run),
             out_of_range_display_mode=int(out_of_range_display_mode),
+            decoration_packaging=bool(decoration_packaging),
+            max_decorations_per_parent=int(max_decorations_per_parent),
+            wrapper_static=bool(wrapper_static),
+            wrapper_collision=False,
+            wrapper_climb=False,
+            wrapper_enable_out_of_range_run=bool(wrapper_enable_out_of_range_run),
+            wrapper_out_of_range_display_mode=int(wrapper_display_mode),
         )
 
         template_path_text = st.text_input(
-            "模板 GIA", value=str(DEFAULT_TEMPLATE_GIA), key="sketch_template_path"
+            "模板 GIA", value=str(DEFAULT_TEMPLATE_GIA), key="sketch_template_path",
+            help="用于复制普通元件资源的本地 GIA 模板路径，必须包含当前选择的模型 ID。",
         )
         output_name = st.text_input(
             "输出文件名", value=f"{Path(uploaded.name).stem}_sketch.gia",
-            key="sketch_output_name"
+            key="sketch_output_name",
+            help="下载时使用的 GIA 文件名；建议保留 `.gia` 扩展名。",
         )
 
         export_payload = {
@@ -1736,6 +1837,13 @@ def render_sketch_to_gia_page() -> None:
             "collision_mode": collision_mode,
             "enable_out_of_range_run": bool(enable_out_of_range_run),
             "out_of_range_display_mode": int(out_of_range_display_mode),
+            "decoration_packaging": bool(decoration_packaging),
+            "max_decorations_per_parent": int(max_decorations_per_parent),
+            "wrapper_static": bool(wrapper_static),
+            "wrapper_collision": False,
+            "wrapper_climb": False,
+            "wrapper_enable_out_of_range_run": bool(wrapper_enable_out_of_range_run),
+            "wrapper_out_of_range_display_mode": int(wrapper_display_mode),
         }
         export_signature = _stage_signature(raw, "export", export_payload)
 

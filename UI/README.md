@@ -1,7 +1,7 @@
 # Streamlit UI
 
 ```powershell
-streamlit run .\scripts\streamlit_app.py
+streamlit run .\streamlit_app.py
 ```
 
 ## 图片生成 GIA
@@ -26,7 +26,7 @@ streamlit run .\scripts\streamlit_app.py
   - `相近颜色矩形合并`：把相邻且颜色差在容差内的像素合并为一个矩形单位，减少生成实体数。
 - 自动计算单个像素块厚度，取 `min(scale.x, scale.z)`。
 - 选择白模元件类型，默认使用长方体。
-- 可在前端选择碰撞模式：`开启原生碰撞`、`开启碰撞和攀爬`、`关闭碰撞`。
+- 图片只展示一个碰撞下拉框：`无`、`有`、`攀爬`。装饰物包装模式下，子装饰物统一关闭碰撞，父空模型始终精确覆盖最终图片块 AABB，下拉框只改变父碰撞模式。
 
 坐标和缩放规则：
 
@@ -51,7 +51,7 @@ streamlit run .\scripts\streamlit_app.py
 
 ## 线稿转 GIA
 
-新增独立页面 `UI/page_sketch_to_gia.py`，核心算法位于 `UI/sketch_to_gia.py`。
+线稿页面位于 `UI/page_sketch_to_gia.py`，核心算法位于 `miliastra_core/sketch.py`。
 
 处理链路：
 
@@ -71,9 +71,7 @@ streamlit run .\scripts\streamlit_app.py
 
 - 默认线段基元：`10009001 长方体`。
 - 平面短轴和 Y 厚度由同一个“线边厚度”参数控制，默认 `0.01m`。
-- 默认生成纯白长方体叠底，顶面与线段底面相接。
+- 默认生成纯白长方体叠底，顶面与线段底面相接；装饰物包装模式下，该叠底作为独立普通静态元件导出，不进入装饰物列表。
 - 所有预览保持处理图像的实际像素尺寸，并使用单画布逐步预览。
 - Transform 不做位置、旋转、缩放步进量化。
 - 单基元长边超过 `50m` 时自动分段，避免单个 scale 超出常用范围。
-
-

@@ -72,16 +72,8 @@ def render_tool_page_header(page: str) -> None:
 
 
 def render_site_footer() -> None:
-    st.markdown(
-        """
-        <footer class="qx-site-footer">
-          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
-            黔ICP备2026012245号
-          </a>
-        </footer>
-        """,
-        unsafe_allow_html=True,
-    )
+    pass
+    return
 
 def render_standard_tool_page(page: str) -> None:
     st.markdown(APP_PAGE_CSS, unsafe_allow_html=True)

@@ -6,12 +6,13 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import cloudpickle
-from redis import Redis
-from rq import Queue
-from rq.job import Job
+
+if TYPE_CHECKING:
+    from redis import Redis
+    from rq import Queue
 
 
 ProgressCallback = Callable[[int, str], None]
@@ -132,6 +133,12 @@ def prepare_task(action: QueuedAction, label: str) -> TaskTicket:
 
 
 def redis_connection() -> Redis:
+    try:
+        from redis import Redis
+    except ImportError as exc:
+        raise TaskQueueUnavailableError(
+            "任务队列需要 redis 和 rq；本地同步模式无需安装这两个依赖"
+        ) from exc
     url = os.environ.get("I2GIA_REDIS_URL", "redis://127.0.0.1:6379/0")
     return Redis.from_url(
         url,
@@ -143,6 +150,12 @@ def redis_connection() -> Redis:
 
 
 def task_queue(connection: Redis | None = None) -> Queue:
+    try:
+        from rq import Queue
+    except ImportError as exc:
+        raise TaskQueueUnavailableError(
+            "任务队列需要 redis 和 rq；本地同步模式无需安装这两个依赖"
+        ) from exc
     timeout = max(60, int(os.environ.get("I2GIA_JOB_TIMEOUT_SECONDS", "1800")))
     return Queue(
         os.environ.get("I2GIA_QUEUE_NAME", "i2gia"),
@@ -192,6 +205,12 @@ def _status_text(value: Any) -> str:
 
 
 def inspect_task(ticket: TaskTicket) -> TaskSnapshot:
+    try:
+        from rq.job import Job
+    except ImportError as exc:
+        raise TaskQueueUnavailableError(
+            "任务队列需要 redis 和 rq；本地同步模式无需安装这两个依赖"
+        ) from exc
     connection = redis_connection()
     queue = task_queue(connection)
     try:
@@ -223,4 +242,3 @@ def load_task_result(ticket: TaskTicket) -> Any:
             return cloudpickle.load(handle)
     except Exception as exc:
         raise TaskExecutionError(f"读取任务结果失败：{exc}") from exc
-

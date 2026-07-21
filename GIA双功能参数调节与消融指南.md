@@ -502,8 +502,8 @@ Alpha阈值: 1
 ## 8. 对应实现文件
 
 - 图片功能 UI：[`UI/page_image_to_gia.py`](UI/page_image_to_gia.py)
-- 图片处理与对象生成：[`UI/image_to_gia.py`](UI/image_to_gia.py)
+- 图片处理与对象生成：[`miliastra_core/image.py`](miliastra_core/image.py)
 - 线稿功能 UI：[`UI/page_sketch_to_gia.py`](UI/page_sketch_to_gia.py)
 - 线稿边缘控件：[`UI/sketch_edge_controls.py`](UI/sketch_edge_controls.py)
-- 线稿处理、拟合与矩形带：[`UI/sketch_to_gia.py`](UI/sketch_to_gia.py)
-- GIA 对象写入与元件类型：[`UI/build_gia_objects.py`](UI/build_gia_objects.py)
+- 线稿处理、拟合与矩形带：[`miliastra_core/sketch.py`](miliastra_core/sketch.py)
+- GIA 对象写入与元件类型：[`miliastra_core/export/builder.py`](miliastra_core/export/builder.py)

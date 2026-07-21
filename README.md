@@ -5,8 +5,19 @@
 ```powershell
 # python=3.11
 pip install streamlit==1.45.1
-streamlit run .\scripts\streamlit_app.py
+streamlit run .\streamlit_app.py
 ```
+
+## 项目结构
+
+| 路径 | 说明 |
+| --- | --- |
+| `miliastra_core/` | 与界面无关的图片处理、GIA 导出和 lossless wire 核心 |
+| `UI/` | Streamlit 页面、交互组件与任务队列适配 |
+| `tests/` | 核心算法和导出回归测试 |
+| `scripts/` | 文件检查、部署和维护脚本 |
+
+核心模块边界和验证约定见 [`miliastra_core/README.md`](miliastra_core/README.md)。
 
 ## 图片生成 GIA
 
@@ -51,3 +62,7 @@ streamlit run .\scripts\streamlit_app.py
 
 例如 2x2 图片映射到 `2m x 2m` 时，每个像素块的 `scale.x=1`、
 `scale.z=1`。左上角像素中心坐标为 `(-0.5, 0, 0.5)`。
+
+
+# 致谢
+https://github.com/mesakas/teyvat-printer/tree/main提供

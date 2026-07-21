@@ -12,8 +12,8 @@ import numpy as np
 import streamlit.components.v1 as components
 from PIL import Image
 
-from UI.sketch_edge_controls import EdgeProcessingConfig, SketchProcessingConfig
-from UI.sketch_to_gia import (
+from miliastra_core.sketch_config import EdgeProcessingConfig, SketchProcessingConfig
+from miliastra_core.sketch import (
     Pixel,
     Point2,
     normalize_pixel_path,

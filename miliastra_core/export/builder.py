@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from .decoration import (
+    DEFAULT_WRAPPER_TEMPLATE_ID,
+    MAX_DECORATIONS_PER_PARENT,
+    build_decorated_gia,
+)
+
 
 HEADER_SIZE = 20
 FOOTER_SIZE = 4
@@ -22,7 +28,8 @@ OUT_OF_RANGE_DISPLAY_MODES = {
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parents[1]
-SCRIPTS_DIR = SCRIPT_DIR.parents[0]
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+DEFAULT_DECORATION_TEMPLATE_GIA = ROOT_DIR / "Template" /"装饰物测试.gia"
 
 
 TYPE_NAME_TO_TEMPLATE_ID = {
@@ -558,6 +565,36 @@ def load_objects(path: Path) -> list[dict[str, Any]]:
     return data
 
 
+def _build_standalone_entity_assets(
+    *,
+    objects: list[dict[str, Any]],
+    template_path: Path,
+    entity_id_start: int,
+) -> tuple[list[bytes], list[dict[str, Any]]]:
+    if not objects:
+        return [], []
+    gia_pb2 = get_gia_pb2()
+    collection, _, _ = load_collection(gia_pb2, template_path)
+    templates = template_assets_by_id(collection)
+    assets: list[bytes] = []
+    records: list[dict[str, Any]] = []
+    used_ids: set[int] = set()
+    for index, item in enumerate(objects):
+        template_id = resolve_template_id(item)
+        if template_id not in templates:
+            raise ValueError(f"独立静态元件 template_id {template_id} 不在普通 GIA 模板中")
+        entity_id = resolve_entity_id(item, entity_id_start + index)
+        if entity_id in used_ids:
+            raise ValueError(f"独立静态元件 entity_id 重复：{entity_id}")
+        used_ids.add(entity_id)
+        asset = copy.deepcopy(templates[template_id])
+        record = update_entity_asset(asset, item, entity_id, template_id)
+        record["kind"] = str(item.get("standalone_kind") or "standalone_entity")
+        records.append(record)
+        assets.append(asset.SerializeToString())
+    return assets, records
+
+
 def build_gia(
     *,
     template_path: Path,
@@ -566,17 +603,83 @@ def build_gia(
     summary_path: Path | None,
     entity_id_start: int,
     progress_callback: Callable[[int, str], None] | None = None,
+    decoration_packaging: bool = False,
+    max_decorations_per_parent: int = MAX_DECORATIONS_PER_PARENT,
+    wrapper_template_id: int = DEFAULT_WRAPPER_TEMPLATE_ID,
+    decoration_template_path: Path | None = None,
+    wrapper_static: bool = False,
+    wrapper_collision: bool = False,
+    wrapper_climb: bool = False,
+    wrapper_enable_out_of_range_run: bool = False,
+    wrapper_out_of_range_display_mode: int = 0,
+    decoration_parent_position: tuple[float, float, float] | list[float] | None = None,
+    decoration_parent_scale: tuple[float, float, float] | list[float] | None = None,
 ) -> dict[str, Any]:
     def report(percent: int, message: str) -> None:
         if progress_callback is not None:
             progress_callback(max(0, min(100, int(percent))), message)
 
-    report(2, "正在载入 GIA 模板")
+    report(2, "正在读取对象列表")
+    objects = load_objects(objects_path)
+    if decoration_packaging:
+        wrapper_path = Path(decoration_template_path or DEFAULT_DECORATION_TEMPLATE_GIA)
+        if not wrapper_path.exists():
+            raise FileNotFoundError(f"装饰物包装模板不存在：{wrapper_path}")
+        decoration_objects: list[dict[str, Any]] = []
+        standalone_objects: list[dict[str, Any]] = []
+        for item in objects:
+            if not bool(item.get("exclude_from_decoration", False)):
+                # 编辑器不会为装饰物资源建立有效碰撞体。显示对象只保留显示数据，
+                # 碰撞由独立静态叠底承担。
+                decoration_item = dict(item)
+                decoration_item["collision"] = False
+                decoration_item["climb"] = False
+                decoration_objects.append(decoration_item)
+                continue
+            standalone_objects.append(item)
+        if not decoration_objects:
+            raise ValueError("装饰物包装模式下没有可包装的显示对象")
+
+        report(5, "正在生成独立静态叠底")
+        standalone_assets, standalone_records = _build_standalone_entity_assets(
+            objects=standalone_objects,
+            template_path=Path(template_path),
+            entity_id_start=entity_id_start,
+        )
+        report(6, "正在载入装饰物包装模板")
+        summary = build_decorated_gia(
+            objects=decoration_objects,
+            decoration_template_path=wrapper_path,
+            output_path=output_path,
+            max_per_parent=max_decorations_per_parent,
+            wrapper_template_id=wrapper_template_id,
+            entity_id_start=entity_id_start,
+            wrapper_static=wrapper_static,
+            wrapper_collision=wrapper_collision,
+            wrapper_climb=wrapper_climb,
+            wrapper_enable_out_of_range_run=wrapper_enable_out_of_range_run,
+            wrapper_out_of_range_display_mode=wrapper_out_of_range_display_mode,
+            standalone_entity_assets=standalone_assets,
+            standalone_entity_records=standalone_records,
+            parent_position=decoration_parent_position,
+            parent_scale=decoration_parent_scale,
+            progress_callback=progress_callback,
+        )
+        summary["objects"] = str(objects_path)
+        summary["source_object_template"] = str(template_path)
+        summary["version"] = "6.7.0"
+        if summary_path:
+            report(97, "正在写入生成摘要")
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report(100, "GIA 装饰物包装完成")
+        return summary
+
+    report(4, "正在载入 GIA 模板")
     gia_pb2 = get_gia_pb2()
     collection, header, footer = load_collection(gia_pb2, template_path)
     templates = template_assets_by_id(collection)
     report(8, "正在读取对象列表")
-    objects = load_objects(objects_path)
 
     new_assets = []
     records = []
@@ -635,6 +738,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True, help="output .gia path")
     parser.add_argument("--summary", type=Path, help="write build summary JSON")
     parser.add_argument("--entity-id-start", type=int, default=DEFAULT_ENTITY_ID_START)
+    parser.add_argument("--decoration-packaging", action="store_true", help="用空模型包装装饰物")
+    parser.add_argument(
+        "--max-decorations-per-parent",
+        type=int,
+        default=MAX_DECORATIONS_PER_PARENT,
+        help=f"每个空模型最多装饰物数量（1..{MAX_DECORATIONS_PER_PARENT}）",
+    )
+    parser.add_argument("--decoration-template", type=Path, default=DEFAULT_DECORATION_TEMPLATE_GIA)
+    parser.add_argument("--wrapper-static", action="store_true", help="把空模型主元件设为静态")
+    parser.add_argument("--wrapper-collision", action="store_true", help="开启空模型原生碰撞")
+    parser.add_argument("--wrapper-climb", action="store_true", help="开启空模型攀爬（同时要求碰撞）")
+    parser.add_argument("--wrapper-enable-out-of-range-run", action="store_true")
+    parser.add_argument("--wrapper-out-of-range-display-mode", type=int, choices=(0, 1, 2), default=0)
     parser.add_argument("--overwrite", action="store_true", help="allow replacing output/summary")
     args = parser.parse_args()
 
@@ -649,6 +765,14 @@ def main() -> None:
         output_path=args.output,
         summary_path=args.summary,
         entity_id_start=args.entity_id_start,
+        decoration_packaging=args.decoration_packaging,
+        max_decorations_per_parent=args.max_decorations_per_parent,
+        decoration_template_path=args.decoration_template,
+        wrapper_static=args.wrapper_static,
+        wrapper_collision=args.wrapper_collision,
+        wrapper_climb=args.wrapper_climb,
+        wrapper_enable_out_of_range_run=args.wrapper_enable_out_of_range_run,
+        wrapper_out_of_range_display_mode=args.wrapper_out_of_range_display_mode,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

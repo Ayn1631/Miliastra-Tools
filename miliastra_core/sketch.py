@@ -13,10 +13,15 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from simplification.cutil import simplify_coords
 
-from UI.build_gia_objects import DEFAULT_ENTITY_ID_START, build_gia
-from UI.image_to_gia import (
+from miliastra_core.export.builder import DEFAULT_ENTITY_ID_START, build_gia
+from miliastra_core.export.decoration import (
+    DEFAULT_WRAPPER_TEMPLATE_ID,
+    MAX_DECORATIONS_PER_PARENT,
+    geometry_bounds,
+    place_objects_on_backing,
+)
+from miliastra_core.image import (
     COLLISION_MODE_OFF,
     DEFAULT_TEMPLATE_GIA,
     collision_mode_flags,
@@ -93,6 +98,14 @@ class SketchGiaSettings:
     enable_out_of_range_run: bool = False
     out_of_range_display_mode: int = 0
     entity_id_start: int = DEFAULT_ENTITY_ID_START + 200_000
+    decoration_packaging: bool = True
+    max_decorations_per_parent: int = MAX_DECORATIONS_PER_PARENT
+    wrapper_template_id: int = DEFAULT_WRAPPER_TEMPLATE_ID
+    wrapper_static: bool = False
+    wrapper_collision: bool = False
+    wrapper_climb: bool = False
+    wrapper_enable_out_of_range_run: bool = False
+    wrapper_out_of_range_display_mode: int = 0
 
 
 @dataclass
@@ -606,6 +619,12 @@ def _simplify_open_points(
         float(epsilon),
         float(np.finfo(np.float64).eps),
     )
+    try:
+        from simplification.cutil import simplify_coords
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "线稿曲线简化需要 simplification；请按 requirements.txt 安装项目依赖"
+        ) from exc
     simplified = simplify_coords(
         np.asarray(points, dtype=np.float64),
         effective_epsilon,
@@ -1211,8 +1230,8 @@ def segments_to_objects(
                         "rgb": [int(v) for v in settings.output_rgb],
                         "opacity": float(settings.output_opacity),
                     },
-                    "collision": enable_collision,
-                    "climb": enable_climb,
+                    "collision": enable_collision and not settings.decoration_packaging,
+                    "climb": enable_climb and not settings.decoration_packaging,
                     "enable_out_of_range_run": bool(settings.enable_out_of_range_run),
                     "out_of_range_display_mode": int(settings.out_of_range_display_mode),
                 }
@@ -1226,11 +1245,11 @@ def build_white_backing_object(settings: SketchGiaSettings) -> dict[str, Any] | 
         return None
 
     enable_collision, enable_climb = collision_mode_flags(settings.collision_mode)
-    line_depth = max(1e-6, float(settings.depth_m))
     backing_thickness = max(1e-6, float(settings.backing_thickness_m))
 
-    # 线段基元以 Y=0 为中心。叠底顶面与线段底面相接，不穿插、不悬空。
-    backing_center_y = -0.5 * (line_depth + backing_thickness)
+    # 叠底是独立静态元件，底面必须贴在 Y=0 地面，否则会被地形遮挡。
+    # 线条对象会在导出阶段再放置到叠底顶面。
+    backing_center_y = backing_thickness / 2.0
     return {
         "entity_id": int(settings.entity_id_start),
         "name": "SketchWhiteBacking",
@@ -1247,6 +1266,8 @@ def build_white_backing_object(settings: SketchGiaSettings) -> dict[str, Any] | 
         "climb": enable_climb,
         "enable_out_of_range_run": bool(settings.enable_out_of_range_run),
         "out_of_range_display_mode": int(settings.out_of_range_display_mode),
+        "exclude_from_decoration": True,
+        "standalone_kind": "sketch_white_backing",
     }
 
 
@@ -2187,8 +2208,8 @@ def ribbon_rectangles_to_objects(
                     "rgb": [int(value) for value in settings.output_rgb],
                     "opacity": float(settings.output_opacity),
                 },
-                "collision": enable_collision,
-                "climb": enable_climb,
+                "collision": enable_collision and not settings.decoration_packaging,
+                "climb": enable_climb and not settings.decoration_packaging,
                 "enable_out_of_range_run": bool(settings.enable_out_of_range_run),
                 "out_of_range_display_mode": int(settings.out_of_range_display_mode),
             }
@@ -2232,6 +2253,8 @@ def fit_ribbon_mesh_stage(
         entity_id_offset=1 if backing is not None else 0,
         progress_callback=_subprogress(progress_callback, 74, 88),
     )
+    if backing is not None:
+        ribbon_objects = place_objects_on_backing(ribbon_objects, backing)
     objects = ([backing] if backing is not None else []) + ribbon_objects
     final_preview = render_ribbon_preview(
         fit_input_mask,
@@ -2345,6 +2368,8 @@ def fit_sketch_stage(
         entity_id_offset=1 if backing is not None else 0,
         progress_callback=_subprogress(progress_callback, 73, 90),
     )
+    if backing is not None:
+        line_objects = place_objects_on_backing(line_objects, backing)
     objects = ([backing] if backing is not None else []) + line_objects
     final_preview = render_segments_preview(
         strokes,
@@ -2473,9 +2498,13 @@ def build_sketch_gia_bytes(
             progress_callback=_subprogress(progress_callback, 6, 30),
         )
         empty_message = "没有可导出的线段对象"
-    objects = ([backing] if backing is not None else []) + line_objects
-    if not objects:
+    if not line_objects:
         raise ValueError(empty_message)
+    if backing is not None:
+        # 最终导出会重新物化线条对象，必须在这里再次应用贴面布局；
+        # 不能依赖拟合预览阶段缓存的 objects。
+        line_objects = place_objects_on_backing(line_objects, backing)
+    objects = ([backing] if backing is not None else []) + line_objects
 
     _progress(progress_callback, 34, "正在准备线段对象数据…")
     objects_json = json.dumps(objects, ensure_ascii=False, indent=2) + "\n"
@@ -2486,6 +2515,10 @@ def build_sketch_gia_bytes(
         summary_path = tmp_dir / "sketch_lines.summary.json"
         objects_path.write_text(objects_json, encoding="utf-8")
         _progress(progress_callback, 40, "正在复制模板元件并写入连续变换…")
+        # 图片导入的父空模型需要精确覆盖 AABB 来提供碰撞；线稿的父模型
+        # 只承载装饰物关系且碰撞固定关闭，因此保持单位缩放，避免空模型
+        # 被拉伸成异常色块。父原点仍使用线条几何的底面中心。
+        line_bounds = geometry_bounds(line_objects)
         build_summary = build_gia(
             template_path=template_path,
             objects_path=objects_path,
@@ -2493,6 +2526,22 @@ def build_sketch_gia_bytes(
             summary_path=summary_path,
             entity_id_start=settings.entity_id_start,
             progress_callback=_subprogress(progress_callback, 40, 88),
+            decoration_packaging=bool(settings.decoration_packaging),
+            max_decorations_per_parent=int(settings.max_decorations_per_parent),
+            wrapper_template_id=int(settings.wrapper_template_id),
+            wrapper_static=bool(settings.wrapper_static),
+            # 线稿包装父空模型和子装饰物都固定关闭碰撞/攀爬；
+            # 需要物理表面时只使用独立纯白叠底。
+            wrapper_collision=False,
+            wrapper_climb=False,
+            wrapper_enable_out_of_range_run=bool(settings.wrapper_enable_out_of_range_run),
+            wrapper_out_of_range_display_mode=int(settings.wrapper_out_of_range_display_mode),
+            decoration_parent_position=list(line_bounds.bottom_center)
+            if settings.decoration_packaging
+            else None,
+            decoration_parent_scale=[1.0, 1.0, 1.0]
+            if settings.decoration_packaging
+            else None,
         )
         _progress(progress_callback, 92, "正在封装 GIA 文件…")
         data = output_path.read_bytes()
@@ -2511,10 +2560,19 @@ def build_sketch_gia_bytes(
             "out_of_range_display_mode": int(settings.out_of_range_display_mode),
             "geometry_mode": geometry_mode,
             "depth_m": float(settings.depth_m),
+            "decoration_packaging": bool(settings.decoration_packaging),
+            "max_decorations_per_parent": int(settings.max_decorations_per_parent),
+            "wrapper_static": bool(settings.wrapper_static),
+            "wrapper_collision": False,
+            "wrapper_climb": False,
+            "wrapper_enable_out_of_range_run": bool(settings.wrapper_enable_out_of_range_run),
+            "wrapper_out_of_range_display_mode": int(settings.wrapper_out_of_range_display_mode),
             "white_backing": {
                 "enabled": bool(settings.add_white_backing),
                 "template_id": int(settings.backing_template_id),
                 "thickness_m": float(settings.backing_thickness_m),
+                "position": list(backing["position"]) if backing is not None else None,
+                "scale": list(backing["scale"]) if backing is not None else None,
                 "rgb": [255, 255, 255],
             },
         }
@@ -2523,6 +2581,9 @@ def build_sketch_gia_bytes(
         "template": str(template_path),
         "file_size": len(data),
         "asset_count": build_summary.get("asset_count"),
+        "parent_count": build_summary.get("parent_count"),
+        "decoration_count": build_summary.get("decoration_count"),
+        "standalone_asset_count": build_summary.get("standalone_asset_count", 0),
         "version": build_summary.get("version"),
     }
     _progress(progress_callback, 100, "GIA 导出完成")
