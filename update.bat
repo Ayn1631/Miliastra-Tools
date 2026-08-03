@@ -1,1 +1,2 @@
-.\i2gia\Scripts\python.exe -m pip install -r requirements.txt -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+.\i2gia\Scripts\python.exe -m ensurepip
+.\i2gia\Scripts\python.exe -m pip install -r .\requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple

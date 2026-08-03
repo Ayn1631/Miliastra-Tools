@@ -5,7 +5,7 @@ from typing import Any
 
 import streamlit as st
 
-from UI.task_queue import (
+from miliastra_core.task.task_queue import (
     QueuedAction,
     TaskExecutionError,
     TaskQueueError,

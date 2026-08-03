@@ -165,7 +165,7 @@ def task_queue(connection: Redis | None = None) -> Queue:
 
 
 def submit_task(action: QueuedAction, label: str) -> TaskTicket:
-    from UI.task_worker import execute_serialized_job
+    from miliastra_core.task.task_worker import execute_serialized_job
 
     connection = redis_connection()
     queue = task_queue(connection)

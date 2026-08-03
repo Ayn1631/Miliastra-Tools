@@ -8,7 +8,7 @@ from typing import Any
 import cloudpickle
 from rq import get_current_job
 
-from UI.task_queue import payload_path, result_path
+from miliastra_core.task.task_queue import payload_path, result_path
 
 
 def _configure_worker_threads() -> None:

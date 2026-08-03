@@ -4,13 +4,15 @@ from pathlib import Path
 
 import streamlit as st
 from UI.page_image_to_gia import render_image_to_gia_page
+from UI.page_llm_to_json import page_export_component
 from UI.page_sketch_to_gia import render_sketch_to_gia_page
-from UI.task_queue import queue_enabled
+from miliastra_core.task.task_queue import queue_enabled
 
 
 TOOL_PAGES = [
     "图片生成 GIA",
     "线稿转 GIA",
+    "导出元件",
 ]
 _DISCLAIMER_ACCEPTED_KEY = "site_disclaimer_accepted"
 _DISCLAIMER_CHECKBOX_KEY = "site_disclaimer_confirmed"
@@ -58,6 +60,7 @@ def render_tool_page_header(page: str) -> None:
     descriptions = {
         "图片生成 GIA": "把图片像素解析为白模单位并生成 GIA。",
         "线稿转 GIA": "把图片边缘或线稿拟合为少量连续变换基元并生成 GIA。",
+        "导出元件": "从结构体和 components JSON 构建可导入地图的 GIL。",
     }
     st.markdown(
         f"""
@@ -82,6 +85,8 @@ def render_standard_tool_page(page: str) -> None:
         render_image_to_gia_page()
     elif page == "线稿转 GIA":
         render_sketch_to_gia_page()
+    elif page == "导出元件":
+        page_export_component()
     render_site_footer()
 
 

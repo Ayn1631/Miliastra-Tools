@@ -5,7 +5,7 @@ import re
 import shutil
 import time
 
-from UI.task_queue import jobs_root
+from miliastra_core.task.task_queue import jobs_root
 
 
 _JOB_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
