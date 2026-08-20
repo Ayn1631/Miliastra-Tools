@@ -411,14 +411,22 @@ def parse_color(value: Any) -> tuple[tuple[int, int, int], float]:
     raise ValueError(f"unsupported color format: {value!r}")
 
 
-def set_model_display(entity, rgb: tuple[int, int, int], opacity_percent: float) -> dict[str, Any]:
+def set_model_display(
+    entity,
+    rgb: tuple[int, int, int],
+    opacity_percent: float,
+    *,
+    no_transparency: bool = False,
+) -> dict[str, Any]:
     display = component_by_type(entity, 22).model_display
+    if no_transparency:
+        opacity_percent = 100.0
     alpha = round(max(0.0, min(100.0, opacity_percent)) / 100.0 * 255.0)
     rgb_value = rgb_to_int(rgb)
 
     display.field_1 = 1
     display.argb_color = (alpha << 24) | rgb_value
-    display.opacity_percent = alpha / 255.0 * 100.0
+    display.opacity_percent = opacity_percent
     display.rgb_color = rgb_value
     display.material_or_shader_id = 6700
     display.field_9 = 0
@@ -511,6 +519,8 @@ def update_entity_asset(
     item: dict[str, Any],
     entity_id: int,
     template_id: int,
+    *,
+    no_transparency: bool = False,
 ) -> dict[str, Any]:
     type_name = TEMPLATE_ID_TO_TYPE_NAME.get(template_id, str(template_id))
     name = str(item.get("name") or f"Object_{entity_id}_{type_name}")
@@ -535,7 +545,7 @@ def update_entity_asset(
 
     set_name_property(entity, name)
     set_transform(entity, position, rotation, scale)
-    display = set_model_display(entity, rgb, opacity_percent)
+    display = set_model_display(entity, rgb, opacity_percent, no_transparency=no_transparency)
     set_static_collider(entity, enable_collision, enable_climb)
     set_load_optimization(entity, enable_out_of_range_run, out_of_range_display_mode)
 
@@ -570,6 +580,7 @@ def _build_standalone_entity_assets(
     objects: list[dict[str, Any]],
     template_path: Path,
     entity_id_start: int,
+    no_transparency_export: bool = False,
 ) -> tuple[list[bytes], list[dict[str, Any]]]:
     if not objects:
         return [], []
@@ -588,7 +599,13 @@ def _build_standalone_entity_assets(
             raise ValueError(f"独立静态元件 entity_id 重复：{entity_id}")
         used_ids.add(entity_id)
         asset = copy.deepcopy(templates[template_id])
-        record = update_entity_asset(asset, item, entity_id, template_id)
+        record = update_entity_asset(
+            asset,
+            item,
+            entity_id,
+            template_id,
+            no_transparency=no_transparency_export,
+        )
         record["kind"] = str(item.get("standalone_kind") or "standalone_entity")
         records.append(record)
         assets.append(asset.SerializeToString())
@@ -605,6 +622,7 @@ def build_gia(
     progress_callback: Callable[[int, str], None] | None = None,
     decoration_packaging: bool = False,
     max_decorations_per_parent: int = MAX_DECORATIONS_PER_PARENT,
+    no_transparency_export: bool = True,
     wrapper_template_id: int = DEFAULT_WRAPPER_TEMPLATE_ID,
     decoration_template_path: Path | None = None,
     wrapper_static: bool = False,
@@ -645,6 +663,7 @@ def build_gia(
             objects=standalone_objects,
             template_path=Path(template_path),
             entity_id_start=entity_id_start,
+            no_transparency_export=no_transparency_export,
         )
         report(6, "正在载入装饰物包装模板")
         summary = build_decorated_gia(
@@ -659,6 +678,7 @@ def build_gia(
             wrapper_climb=wrapper_climb,
             wrapper_enable_out_of_range_run=wrapper_enable_out_of_range_run,
             wrapper_out_of_range_display_mode=wrapper_out_of_range_display_mode,
+            no_transparency_export=no_transparency_export,
             standalone_entity_assets=standalone_assets,
             standalone_entity_records=standalone_records,
             parent_position=decoration_parent_position,
@@ -701,7 +721,15 @@ def build_gia(
         used_ids.add(entity_id)
 
         asset = copy.deepcopy(templates[template_id])
-        records.append(update_entity_asset(asset, item, entity_id, template_id))
+        records.append(
+            update_entity_asset(
+                asset,
+                item,
+                entity_id,
+                template_id,
+                no_transparency=no_transparency_export,
+            )
+        )
         new_assets.append(asset)
 
     report(87, f"对象写入完成，共 {len(new_assets):,} 个")

@@ -32,6 +32,7 @@ class GiaExportSettings:
     quantization_step_m: float = 0.01
     decoration_packaging: bool = True
     max_decorations_per_parent: int = MAX_DECORATIONS_PER_PARENT
+    no_transparency_export: float  = True
     wrapper_template_id: int = DEFAULT_WRAPPER_TEMPLATE_ID
     wrapper_static: bool = False
     wrapper_collision: bool = False
@@ -143,6 +144,7 @@ def build_gia_from_plan(
             entity_id_start=settings.entity_id_start,
             decoration_packaging=bool(settings.decoration_packaging),
             max_decorations_per_parent=int(settings.max_decorations_per_parent),
+            no_transparency_export=float(settings.no_transparency_export),
             wrapper_template_id=int(settings.wrapper_template_id),
             wrapper_static=bool(settings.wrapper_static),
             # 图片装饰物的子碰撞固定关闭；高层碰撞选项只控制精确 AABB 父空模型。

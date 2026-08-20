@@ -403,6 +403,7 @@ def _patch_decoration_asset(
     item: dict[str, Any],
     local_position: tuple[float, float, float],
     local_scale: tuple[float, float, float],
+    no_transparency: bool = False,
 ) -> tuple[bytes, bytes, dict[str, Any]]:
     asset = parse_fields(template, context="decoration resource asset")
     meta_blob = first_bytes(asset, 1)
@@ -469,10 +470,11 @@ def _patch_decoration_asset(
     )
 
     def patch_color(payload: list[WireField]) -> None:
+        alpha = 255 if no_transparency else a
         rgb = (r << 16) | (g << 8) | b
         set_varint(payload, 1, 1)
-        set_varint(payload, 3, (a << 24) | rgb)
-        set_fixed32(payload, 4, a * 100.0 / 255.0)
+        set_varint(payload, 3, (alpha << 24) | rgb)
+        set_fixed32(payload, 4, alpha * 100.0 / 255.0)
         set_varint(payload, 5, rgb)
         set_varint(payload, 6, 6700)
         set_varint(payload, 9, 0)
@@ -533,7 +535,7 @@ def _patch_decoration_asset(
         "rotation": list(rotation),
         "scale": list(local_scale),
         "world_scale": list(world_scale),
-        "rgba": [r, g, b, a],
+        "rgba": [r, g, b, 255 if no_transparency else a],
         "enable_native_collision": collision,
         "enable_climb": climb,
         "enable_out_of_range_run": run_out_of_range,
@@ -569,6 +571,7 @@ def build_decorated_gia(
     wrapper_climb: bool = False,
     wrapper_enable_out_of_range_run: bool = False,
     wrapper_out_of_range_display_mode: int = 0,
+    no_transparency_export: bool = False,
     standalone_entity_assets: Sequence[bytes] = (),
     standalone_entity_records: Sequence[dict[str, Any]] = (),
     parent_position: Sequence[float] | None = None,
@@ -663,6 +666,7 @@ def build_decorated_gia(
                 item=item,
                 local_position=local_position,
                 local_scale=local_scale,
+                no_transparency=no_transparency_export,
             )
             record["source_entity_id"] = source_id
             metas.append(meta)

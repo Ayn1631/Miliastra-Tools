@@ -337,6 +337,12 @@ def _render_gia_export(
         key="gia_decoration_packaging",
         help="按 999 上限分组，但所有空模型都放在整张图片的统一几何中心，内部元件作为装饰物保存。",
     )
+    no_transparency_export = st.checkbox(
+        "导出时设置不透明度为100%",
+        value=True,
+        key="gia_no_transparency_export",
+        help="开启后，导出的 GIA 文件中所有元件的透明度都会被设置为 100%，避免在编辑器中出现半透明效果。",
+    )
     max_decorations = st.number_input(
         "每个空模型最多装饰物",
         min_value=1,
@@ -403,6 +409,7 @@ def _render_gia_export(
             quantization_step_m=qstep,
             decoration_packaging=bool(wrap_decorations),
             max_decorations_per_parent=int(max_decorations),
+            no_transparency_export=float(no_transparency_export),
             wrapper_static=bool(wrapper_static),
             wrapper_enable_out_of_range_run=bool(wrapper_enable_out_of_range_run),
             wrapper_out_of_range_display_mode=int(wrapper_display_mode),
