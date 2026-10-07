@@ -35,3 +35,7 @@ build/
 .*/
 
 i2gia/
+# Keep GPT2Gia regression tests; other local tests remain ignored.
+!tests/
+tests/*
+!tests/test_gpt2gia*.py

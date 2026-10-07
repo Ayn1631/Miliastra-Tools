@@ -20,6 +20,7 @@ scripts/inspect_gil.py ---> miliastra_core.gil ---> miliastra_core.protobuf
 | --- | --- | --- |
 | `raster` | 图片读取、缩放、背景过滤、颜色量化和矩形合并 | `build_raster_plan`、`RasterAlgorithmSettings` |
 | `image` | UI 无关的图片转 GIA 工作流及旧版参数兼容 | `ImageGiaSettings`、`build_image_gia_bytes` |
+| `gpt2gia` | GPT 模型 JSON 归一化、材质合并、家具组装和 GIA 转换 | `ModelGiaSettings`、`build_model_gia_bytes`、`assemble_modules` |
 | `sketch` | 线稿检测、骨架提取、曲线拟合及 GIA 构建 | `SketchGiaSettings`、`analyze_sketch` |
 | `sketch_config` | 线稿处理配置模型与默认参数 | `SketchProcessingConfig` |
 | `export` | 把 `RasterPlan` 映射为 GIA 对象，以及底层 GIA 二进制构建 | `build_gia_from_plan`、`build_gia` |

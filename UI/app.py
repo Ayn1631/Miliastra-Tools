@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import streamlit as st
+from UI.page_auto_convert_to_static import render_auto_convert_to_static
+from UI.page_gpt2gia import render_gpt2gia_page
 from UI.page_image_to_gia import render_image_to_gia_page
 from UI.page_llm_to_json import page_export_component
 from UI.page_sketch_to_gia import render_sketch_to_gia_page
@@ -13,12 +15,14 @@ TOOL_PAGES = [
     "图片生成 GIA",
     "线稿转 GIA",
     "导出元件",
+    "自动元件转静态",
+    "GPT2Gia",
 ]
 _DISCLAIMER_ACCEPTED_KEY = "site_disclaimer_accepted"
 _DISCLAIMER_CHECKBOX_KEY = "site_disclaimer_confirmed"
 
 UI_DIR = Path(__file__).resolve().parent
-APP_PAGE_CSS = (UI_DIR / 'APP_PAGE_CSS.css').read_text(encoding='utf-8')
+APP_PAGE_CSS = (UI_DIR / "APP_PAGE_CSS.css").read_text(encoding="utf-8")
 
 
 @st.dialog("使用须知与免责声明", width="large")
@@ -61,6 +65,8 @@ def render_tool_page_header(page: str) -> None:
         "图片生成 GIA": "把图片像素解析为白模单位并生成 GIA。",
         "线稿转 GIA": "把图片边缘或线稿拟合为少量连续变换基元并生成 GIA。",
         "导出元件": "从结构体和 components JSON 构建可导入地图的 GIL。",
+        "自动元件转静态": "按 GIA 列表或算法筛选，把 GIL 实体设为静态元件。",
+        "GPT2Gia": "将模型 JSON 与材质配色转换为 GIA。",
     }
     st.markdown(
         f"""
@@ -78,6 +84,7 @@ def render_site_footer() -> None:
     pass
     return
 
+
 def render_standard_tool_page(page: str) -> None:
     st.markdown(APP_PAGE_CSS, unsafe_allow_html=True)
     render_tool_page_header(page)
@@ -87,6 +94,10 @@ def render_standard_tool_page(page: str) -> None:
         render_sketch_to_gia_page()
     elif page == "导出元件":
         page_export_component()
+    elif page == "自动元件转静态":
+        render_auto_convert_to_static()
+    elif page == "GPT2Gia":
+        render_gpt2gia_page()
     render_site_footer()
 
 

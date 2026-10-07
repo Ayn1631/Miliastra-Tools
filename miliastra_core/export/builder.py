@@ -352,11 +352,14 @@ def set_vec3(vec, values: list[float] | tuple[float, float, float]) -> None:
     vec.z = float(values[2])
 
 
-def set_name_property(entity, name: str) -> None:
+def set_name_property(entity, name: str, *, static: bool = True) -> None:
     for prop in entity.data.properties:
         if prop.property_type == 1 and prop.HasField("name"):
             prop.name.name = name
-            prop.name.static_block = 1
+            if static:
+                prop.name.static_block = 1
+            else:
+                prop.name.ClearField("static_block")
             return
 
 
@@ -417,8 +420,13 @@ def set_model_display(
     opacity_percent: float,
     *,
     no_transparency: bool = False,
+    enabled: bool = True,
 ) -> dict[str, Any]:
     display = component_by_type(entity, 22).model_display
+    if not enabled:
+        for field in ("field_1", "argb_color", "opacity_percent", "rgb_color", "material_or_shader_id", "field_9"):
+            display.ClearField(field)
+        return {"custom_color_enabled": False}
     if no_transparency:
         opacity_percent = 100.0
     alpha = round(max(0.0, min(100.0, opacity_percent)) / 100.0 * 255.0)
@@ -453,28 +461,30 @@ def set_static_collider(entity, enable_collision: bool, enable_climb: bool) -> N
 
 def set_load_optimization(
     entity,
-    enable_out_of_range_run: bool,
-    out_of_range_display_mode: int,
+    enable_out_of_range_run: bool | None,
+    out_of_range_display_mode: int | None,
 ) -> None:
-    display_mode = int(out_of_range_display_mode)
-    if display_mode not in OUT_OF_RANGE_DISPLAY_MODES:
+    display_mode = None if out_of_range_display_mode is None else int(out_of_range_display_mode)
+    if display_mode is not None and display_mode not in OUT_OF_RANGE_DISPLAY_MODES:
         raise ValueError(
             "out_of_range_display_mode must be 0 (default), 1 (permanent), or 2 "
             f"(permanent highest precision), got {out_of_range_display_mode}"
         )
 
-    run_component = ensure_component_by_type(entity, 12).field_22
-    run_component.Clear()
-    if enable_out_of_range_run:
-        run_component.enable_out_of_range_run = True
-    else:
-        # The verified disabled representation is field_501 = 1.
-        run_component.field_501 = 1
+    if enable_out_of_range_run is not None:
+        run_component = ensure_component_by_type(entity, 12).field_22
+        run_component.Clear()
+        if enable_out_of_range_run:
+            run_component.enable_out_of_range_run = True
+        else:
+            # The verified disabled representation is field_501 = 1.
+            run_component.field_501 = 1
 
-    display_component = ensure_component_by_type(entity, 20).field_30
-    display_component.Clear()
-    if display_mode:
-        display_component.display_mode = display_mode
+    if display_mode is not None:
+        display_component = ensure_component_by_type(entity, 20).field_30
+        display_component.Clear()
+        if display_mode:
+            display_component.display_mode = display_mode
 
 
 def template_assets_by_id(collection) -> dict[int, object]:
@@ -521,6 +531,7 @@ def update_entity_asset(
     template_id: int,
     *,
     no_transparency: bool = False,
+    preserve_template_load_settings: bool = False,
 ) -> dict[str, Any]:
     type_name = TEMPLATE_ID_TO_TYPE_NAME.get(template_id, str(template_id))
     name = str(item.get("name") or f"Object_{entity_id}_{type_name}")
@@ -532,6 +543,11 @@ def update_entity_asset(
     enable_climb = bool(item.get("enable_climb", item.get("climb", True)))
     enable_out_of_range_run = bool(item.get("enable_out_of_range_run", False))
     out_of_range_display_mode = int(item.get("out_of_range_display_mode", 0))
+    if preserve_template_load_settings:
+        if "enable_out_of_range_run" not in item:
+            enable_out_of_range_run = None
+        if "out_of_range_display_mode" not in item:
+            out_of_range_display_mode = None
 
     asset.meta.asset_id = entity_id
     asset.name = name
@@ -543,9 +559,10 @@ def update_entity_asset(
     entity.data.template.field_2 = 1
     entity.data.template_id_ref = template_id
 
-    set_name_property(entity, name)
+    set_name_property(entity, name, static=bool(item.get("static", item.get("static_export", True))))
     set_transform(entity, position, rotation, scale)
-    display = set_model_display(entity, rgb, opacity_percent, no_transparency=no_transparency)
+    display = set_model_display(entity, rgb, opacity_percent, no_transparency=no_transparency,
+                                enabled=bool(item.get("custom_color_enabled", True)))
     set_static_collider(entity, enable_collision, enable_climb)
     set_load_optimization(entity, enable_out_of_range_run, out_of_range_display_mode)
 
@@ -623,6 +640,7 @@ def build_gia(
     decoration_packaging: bool = False,
     max_decorations_per_parent: int = MAX_DECORATIONS_PER_PARENT,
     no_transparency_export: bool = True,
+    preserve_template_load_settings: bool = False,
     wrapper_template_id: int = DEFAULT_WRAPPER_TEMPLATE_ID,
     decoration_template_path: Path | None = None,
     wrapper_static: bool = False,
@@ -728,6 +746,7 @@ def build_gia(
                 entity_id,
                 template_id,
                 no_transparency=no_transparency_export,
+                preserve_template_load_settings=preserve_template_load_settings,
             )
         )
         new_assets.append(asset)
