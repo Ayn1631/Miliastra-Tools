@@ -8,7 +8,6 @@
 .external/
 __pycache__/
 tests/
-*.zip
 
 # YSM2Gia
 output/
